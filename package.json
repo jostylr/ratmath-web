@@ -1,0 +1,18 @@
+{
+    "name": "ratweb",
+    "version": "1.0.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build",
+        "preview": "vite preview"
+    },
+    "dependencies": {
+        "ratmath": "file:../ratmath",
+        "ratmath-parser": "file:../ratmath-parser"
+    },
+    "devDependencies": {
+        "vite": "^5.0.0"
+    }
+}
