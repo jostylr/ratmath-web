@@ -5,7 +5,7 @@
  * with support for operations, interactive manipulation, and educational tools.
  */
 
-import { Rational, RationalInterval } from "ratmath";
+import { Rational, RationalInterval } from "@ratmath/core";
 
 export class IntervalVisualization {
   constructor(container, options = {}) {

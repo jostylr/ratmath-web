@@ -1,4 +1,4 @@
-// src/base-system.js
+// ../../packages/core/src/base-system.js
 class BaseSystem {
   #base;
   #characters;
@@ -307,7 +307,7 @@ BaseSystem.BASE62 = new BaseSystem("0-9a-zA-Z", "Base 62");
 BaseSystem.BASE60 = new BaseSystem("0-9a-zA-X", "Base 60 (Sexagesimal)");
 BaseSystem.ROMAN = new BaseSystem("IVXLCDM", "Roman Numerals");
 
-// src/rational.js
+// ../../packages/core/src/rational.js
 var bitLength = function(int) {
   if (int === 0n)
     return 0;
@@ -615,44 +615,63 @@ class Rational {
     return this.toRepeatingBase(baseSystem);
   }
   toRepeatingBase(baseSystem) {
+    return this.toRepeatingBaseWithPeriod(baseSystem).baseStr;
+  }
+  toRepeatingBaseWithPeriod(baseSystem, useRepeatNotation = true) {
     if (!(baseSystem instanceof BaseSystem)) {
       throw new Error("Argument must be a BaseSystem");
     }
     if (this.#numerator < 0n) {
-      return "-" + this.negate().toRepeatingBase(baseSystem);
+      const result2 = this.negate().toRepeatingBaseWithPeriod(baseSystem, useRepeatNotation);
+      return {
+        baseStr: "-" + result2.baseStr,
+        period: result2.period
+      };
     }
-    const base = BigInt(baseSystem.base);
+    const baseBigInt = BigInt(baseSystem.base);
     let num = this.#numerator;
     let den = this.#denominator;
     const integerPart = num / den;
     let remainder = num % den;
     let result = baseSystem.fromDecimal(integerPart);
     if (remainder === 0n) {
-      return result;
+      return { baseStr: result, period: 0 };
     }
     result += ".";
     const remainders = new Map;
     let fractionParts = [];
     let cycleStartIndex = -1;
-    while (remainder !== 0n) {
+    const limit = 1e6;
+    while (remainder !== 0n && fractionParts.length < limit) {
       if (remainders.has(remainder)) {
         cycleStartIndex = remainders.get(remainder);
         break;
       }
       remainders.set(remainder, fractionParts.length);
-      remainder *= base;
+      remainder *= baseBigInt;
       const digit = remainder / den;
       remainder = remainder % den;
       fractionParts.push(baseSystem.getChar(digit));
     }
+    let period = 0;
     if (cycleStartIndex !== -1) {
       const nonRepeating = fractionParts.slice(0, cycleStartIndex).join("");
       const repeating = fractionParts.slice(cycleStartIndex).join("");
-      result += nonRepeating + "#" + repeating;
+      period = fractionParts.length - cycleStartIndex;
+      const formattedNonRepeating = useRepeatNotation ? Rational.#formatRepeatedDigits(nonRepeating) : nonRepeating;
+      const formattedRepeating = useRepeatNotation ? Rational.#formatRepeatedDigits(repeating) : repeating;
+      result += formattedNonRepeating + "#" + formattedRepeating;
+    } else if (remainder === 0n) {
+      const terminating = fractionParts.join("");
+      const formattedTerminating = useRepeatNotation ? Rational.#formatRepeatedDigits(terminating) : terminating;
+      result += formattedTerminating + "#0";
     } else {
-      result += fractionParts.join("");
+      const partial = fractionParts.join("");
+      const formattedPartial = useRepeatNotation ? Rational.#formatRepeatedDigits(partial) : partial;
+      result += formattedPartial + "...";
+      period = -1;
     }
-    return result;
+    return { baseStr: result, period };
   }
   toBase(baseSystem) {
     if (!(baseSystem instanceof BaseSystem)) {
@@ -1342,7 +1361,7 @@ class Rational {
   }
 }
 
-// src/rational-interval.js
+// ../../packages/core/src/rational-interval.js
 class RationalInterval {
   #low;
   #high;
@@ -1823,7 +1842,462 @@ class RationalInterval {
   }
 }
 
-// src/integer.js
+// ../../packages/core/src/fraction.js
+class Fraction {
+  #numerator;
+  #denominator;
+  constructor(numerator, denominator = 1n, options = {}) {
+    if (typeof numerator === "string") {
+      const parts = numerator.trim().split("/");
+      if (parts.length === 1) {
+        this.#numerator = BigInt(parts[0]);
+        this.#denominator = BigInt(denominator);
+      } else if (parts.length === 2) {
+        this.#numerator = BigInt(parts[0]);
+        this.#denominator = BigInt(parts[1]);
+      } else {
+        throw new Error("Invalid fraction format. Use 'a/b' or 'a'");
+      }
+    } else {
+      this.#numerator = BigInt(numerator);
+      this.#denominator = BigInt(denominator);
+    }
+    if (this.#denominator === 0n) {
+      if (options.allowInfinite && (this.#numerator === 1n || this.#numerator === -1n)) {
+        this._isInfinite = true;
+      } else {
+        throw new Error("Denominator cannot be zero");
+      }
+    } else {
+      this._isInfinite = false;
+    }
+  }
+  get numerator() {
+    return this.#numerator;
+  }
+  get denominator() {
+    return this.#denominator;
+  }
+  get isInfinite() {
+    return this._isInfinite || false;
+  }
+  add(other) {
+    if (this.#denominator !== other.denominator) {
+      throw new Error("Addition only supported for equal denominators");
+    }
+    return new Fraction(this.#numerator + other.numerator, this.#denominator);
+  }
+  subtract(other) {
+    if (this.#denominator !== other.denominator) {
+      throw new Error("Subtraction only supported for equal denominators");
+    }
+    return new Fraction(this.#numerator - other.numerator, this.#denominator);
+  }
+  multiply(other) {
+    return new Fraction(this.#numerator * other.numerator, this.#denominator * other.denominator);
+  }
+  divide(other) {
+    if (other.numerator === 0n) {
+      throw new Error("Division by zero");
+    }
+    return new Fraction(this.#numerator * other.denominator, this.#denominator * other.numerator);
+  }
+  pow(exponent) {
+    const n = BigInt(exponent);
+    if (n === 0n) {
+      if (this.#numerator === 0n) {
+        throw new Error("Zero cannot be raised to the power of zero");
+      }
+      return new Fraction(1, 1);
+    }
+    if (this.#numerator === 0n && n < 0n) {
+      throw new Error("Zero cannot be raised to a negative power");
+    }
+    if (n < 0n) {
+      return new Fraction(this.#denominator ** -n, this.#numerator ** -n);
+    }
+    return new Fraction(this.#numerator ** n, this.#denominator ** n);
+  }
+  scale(factor) {
+    const scaleFactor = BigInt(factor);
+    return new Fraction(this.#numerator * scaleFactor, this.#denominator * scaleFactor);
+  }
+  static #gcd(a, b) {
+    a = a < 0n ? -a : a;
+    b = b < 0n ? -b : b;
+    while (b !== 0n) {
+      const temp = b;
+      b = a % b;
+      a = temp;
+    }
+    return a;
+  }
+  reduce() {
+    if (this.#numerator === 0n) {
+      return new Fraction(0, 1);
+    }
+    const gcd = Fraction.#gcd(this.#numerator, this.#denominator);
+    const reducedNum = this.#numerator / gcd;
+    const reducedDen = this.#denominator / gcd;
+    if (reducedDen < 0n) {
+      return new Fraction(-reducedNum, -reducedDen);
+    }
+    return new Fraction(reducedNum, reducedDen);
+  }
+  static mediant(a, b) {
+    return new Fraction(a.numerator + b.numerator, a.denominator + b.denominator);
+  }
+  toRational() {
+    return new Rational(this.#numerator, this.#denominator);
+  }
+  static fromRational(rational) {
+    return new Fraction(rational.numerator, rational.denominator);
+  }
+  toString() {
+    if (this.#denominator === 1n) {
+      return this.#numerator.toString();
+    }
+    return `${this.#numerator}/${this.#denominator}`;
+  }
+  equals(other) {
+    return this.#numerator === other.numerator && this.#denominator === other.denominator;
+  }
+  lessThan(other) {
+    const leftSide = this.#numerator * other.denominator;
+    const rightSide = this.#denominator * other.numerator;
+    return leftSide < rightSide;
+  }
+  lessThanOrEqual(other) {
+    const leftSide = this.#numerator * other.denominator;
+    const rightSide = this.#denominator * other.numerator;
+    return leftSide <= rightSide;
+  }
+  greaterThan(other) {
+    const leftSide = this.#numerator * other.denominator;
+    const rightSide = this.#denominator * other.numerator;
+    return leftSide > rightSide;
+  }
+  greaterThanOrEqual(other) {
+    const leftSide = this.#numerator * other.denominator;
+    const rightSide = this.#denominator * other.numerator;
+    return leftSide >= rightSide;
+  }
+  E(exponent) {
+    const exp = BigInt(exponent);
+    if (exp >= 0n) {
+      const newNumerator = this.#numerator * 10n ** exp;
+      return new Fraction(newNumerator, this.#denominator);
+    } else {
+      const newDenominator = this.#denominator * 10n ** -exp;
+      return new Fraction(this.#numerator, newDenominator);
+    }
+  }
+  mediant(other) {
+    if (this.isInfinite && other.isInfinite) {
+      if (this.#numerator === -1n && other.numerator === 1n) {
+        return new Fraction(0n, 1n);
+      } else if (this.#numerator === 1n && other.numerator === -1n) {
+        return new Fraction(0n, 1n);
+      }
+      throw new Error("Cannot compute mediant of two infinite fractions");
+    }
+    if (this.isInfinite || other.isInfinite) {
+      const newNum2 = this.#numerator + other.numerator;
+      const newDen2 = this.#denominator + other.denominator;
+      if (newNum2 === 0n && newDen2 === 0n) {
+        throw new Error("Mediant would result in 0/0");
+      }
+      return new Fraction(newNum2, newDen2);
+    }
+    const newNum = this.#numerator + other.numerator;
+    const newDen = this.#denominator + other.denominator;
+    return new Fraction(newNum, newDen);
+  }
+  fareyParents() {
+    if (this.isInfinite) {
+      throw new Error("Cannot find Farey parents of infinite fraction");
+    }
+    if (this.#numerator === 0n && this.#denominator === 1n) {
+      const left = new Fraction(-1n, 0n, { allowInfinite: true });
+      const right = new Fraction(1n, 0n, { allowInfinite: true });
+      return { left, right };
+    }
+    let leftBound = new Fraction(-1n, 0n, { allowInfinite: true });
+    let rightBound = new Fraction(1n, 0n, { allowInfinite: true });
+    let current = new Fraction(0n, 1n);
+    while (!current.equals(this)) {
+      if (this.lessThan(current)) {
+        rightBound = current;
+        current = leftBound.mediant(current);
+      } else {
+        leftBound = current;
+        current = current.mediant(rightBound);
+      }
+    }
+    return { left: leftBound, right: rightBound };
+  }
+  _extendedGcd(a, b) {
+    if (b === 0n) {
+      return { gcd: a, x: 1n, y: 0n };
+    }
+    const result = this._extendedGcd(b, a % b);
+    const x = result.y;
+    const y = result.x - a / b * result.y;
+    return { gcd: result.gcd, x, y };
+  }
+  static mediantPartner(endpoint, mediant) {
+    if (endpoint.isInfinite || mediant.isInfinite) {
+      throw new Error("Cannot compute mediant partner with infinite fractions");
+    }
+    const p = endpoint.numerator;
+    const q = endpoint.denominator;
+    const a = mediant.numerator;
+    const b = mediant.denominator;
+    const s = 1n;
+    const numerator = a * (q + s) - b * p;
+    if (numerator % b !== 0n) {
+      const r2 = a * 2n - p;
+      const s_calculated = b * 2n - q;
+      return new Fraction(r2, s_calculated);
+    }
+    const r = numerator / b;
+    return new Fraction(r, s);
+  }
+  static isMediantTriple(left, mediant, right) {
+    if (mediant.isInfinite) {
+      return false;
+    }
+    if (left.isInfinite && right.isInfinite) {
+      return false;
+    }
+    try {
+      const computedMediant = left.mediant(right);
+      return mediant.equals(computedMediant);
+    } catch (error) {
+      return false;
+    }
+  }
+  static isFareyTriple(left, mediant, right) {
+    if (!Fraction.isMediantTriple(left, mediant, right)) {
+      return false;
+    }
+    if (!left.isInfinite && !right.isInfinite) {
+      const a = left.numerator;
+      const b = left.denominator;
+      const c = right.numerator;
+      const d = right.denominator;
+      const determinant = a * d - b * c;
+      return determinant === 1n || determinant === -1n;
+    }
+    return left.isInfinite || right.isInfinite;
+  }
+  sternBrocotParent() {
+    if (this.isInfinite) {
+      throw new Error("Infinite fractions don't have parents in Stern-Brocot tree");
+    }
+    if (this.numerator === 0n && this.denominator === 1n) {
+      return null;
+    }
+    const path = this.sternBrocotPath();
+    if (path.length === 0) {
+      return null;
+    }
+    const parentPath = path.slice(0, -1);
+    return Fraction.fromSternBrocotPath(parentPath);
+  }
+  sternBrocotChildren() {
+    if (this.isInfinite) {
+      throw new Error("Infinite fractions don't have children in Stern-Brocot tree");
+    }
+    const currentPath = this.sternBrocotPath();
+    const leftPath = [...currentPath, "L"];
+    const rightPath = [...currentPath, "R"];
+    return {
+      left: Fraction.fromSternBrocotPath(leftPath),
+      right: Fraction.fromSternBrocotPath(rightPath)
+    };
+  }
+  sternBrocotPath() {
+    if (this.isInfinite) {
+      throw new Error("Infinite fractions don't have tree paths");
+    }
+    const reduced = this.reduce();
+    if (reduced.numerator === 0n && reduced.denominator === 1n) {
+      return [];
+    }
+    let left = new Fraction(-1, 0, { allowInfinite: true });
+    let right = new Fraction(1, 0, { allowInfinite: true });
+    let current = new Fraction(0, 1);
+    const path = [];
+    while (!current.equals(reduced)) {
+      if (reduced.lessThan(current)) {
+        path.push("L");
+        right = current;
+        current = left.mediant(current);
+      } else {
+        path.push("R");
+        left = current;
+        current = current.mediant(right);
+      }
+      if (path.length > 500) {
+        throw new Error("Stern-Brocot path too long - this may indicate a bug in the algorithm");
+      }
+    }
+    return path;
+  }
+  static fromSternBrocotPath(path) {
+    let left = new Fraction(-1, 0, { allowInfinite: true });
+    let right = new Fraction(1, 0, { allowInfinite: true });
+    let current = new Fraction(0, 1);
+    for (const direction of path) {
+      if (direction === "L") {
+        right = current;
+        current = left.mediant(current);
+      } else if (direction === "R") {
+        left = current;
+        current = current.mediant(right);
+      } else {
+        throw new Error(`Invalid direction in path: ${direction}`);
+      }
+    }
+    return current;
+  }
+  isSternBrocotValid() {
+    if (this.isInfinite) {
+      return this.numerator === 1n || this.numerator === -1n;
+    }
+    try {
+      const path = this.sternBrocotPath();
+      const reconstructed = Fraction.fromSternBrocotPath(path);
+      return this.equals(reconstructed);
+    } catch (error) {
+      return false;
+    }
+  }
+  sternBrocotDepth() {
+    if (this.isInfinite) {
+      return Infinity;
+    }
+    if (this.numerator === 0n && this.denominator === 1n) {
+      return 0;
+    }
+    return this.sternBrocotPath().length;
+  }
+  sternBrocotAncestors() {
+    if (this.isInfinite) {
+      return [];
+    }
+    const ancestors = [];
+    const path = this.sternBrocotPath();
+    for (let i = 0;i < path.length; i++) {
+      const partialPath = path.slice(0, i);
+      ancestors.push(Fraction.fromSternBrocotPath(partialPath));
+    }
+    ancestors.reverse();
+    return ancestors;
+  }
+}
+
+// ../../packages/core/src/fraction-interval.js
+class FractionInterval {
+  #low;
+  #high;
+  constructor(a, b) {
+    if (!(a instanceof Fraction) || !(b instanceof Fraction)) {
+      throw new Error("FractionInterval endpoints must be Fraction objects");
+    }
+    if (a.lessThanOrEqual(b)) {
+      this.#low = a;
+      this.#high = b;
+    } else {
+      this.#low = b;
+      this.#high = a;
+    }
+  }
+  get low() {
+    return this.#low;
+  }
+  get high() {
+    return this.#high;
+  }
+  mediantSplit() {
+    const mediant = Fraction.mediant(this.#low, this.#high);
+    return [
+      new FractionInterval(this.#low, mediant),
+      new FractionInterval(mediant, this.#high)
+    ];
+  }
+  partitionWithMediants(n = 1) {
+    if (n < 0) {
+      throw new Error("Depth of mediant partitioning must be non-negative");
+    }
+    if (n === 0) {
+      return [this];
+    }
+    let intervals = [this];
+    for (let level = 0;level < n; level++) {
+      const newIntervals = [];
+      for (const interval of intervals) {
+        const splitIntervals = interval.mediantSplit();
+        newIntervals.push(...splitIntervals);
+      }
+      intervals = newIntervals;
+    }
+    return intervals;
+  }
+  partitionWith(fn) {
+    const partitionPoints = fn(this.#low, this.#high);
+    if (!Array.isArray(partitionPoints)) {
+      throw new Error("Partition function must return an array of Fractions");
+    }
+    for (const point of partitionPoints) {
+      if (!(point instanceof Fraction)) {
+        throw new Error("Partition function must return Fraction objects");
+      }
+    }
+    const allPoints = [this.#low, ...partitionPoints, this.#high];
+    allPoints.sort((a, b) => {
+      if (a.equals(b))
+        return 0;
+      if (a.lessThan(b))
+        return -1;
+      return 1;
+    });
+    if (!allPoints[0].equals(this.#low) || !allPoints[allPoints.length - 1].equals(this.#high)) {
+      throw new Error("Partition points should be within the interval");
+    }
+    const uniquePoints = [];
+    for (let i = 0;i < allPoints.length; i++) {
+      if (i === 0 || !allPoints[i].equals(allPoints[i - 1])) {
+        uniquePoints.push(allPoints[i]);
+      }
+    }
+    const intervals = [];
+    for (let i = 0;i < uniquePoints.length - 1; i++) {
+      intervals.push(new FractionInterval(uniquePoints[i], uniquePoints[i + 1]));
+    }
+    return intervals;
+  }
+  toRationalInterval() {
+    return new RationalInterval(this.#low.toRational(), this.#high.toRational());
+  }
+  static fromRationalInterval(interval) {
+    return new FractionInterval(Fraction.fromRational(interval.low), Fraction.fromRational(interval.high));
+  }
+  toString() {
+    return `${this.#low.toString()}:${this.#high.toString()}`;
+  }
+  equals(other) {
+    return this.#low.equals(other.low) && this.#high.equals(other.high);
+  }
+  E(exponent) {
+    const newLow = this.#low.E(exponent);
+    const newHigh = this.#high.E(exponent);
+    return new FractionInterval(newLow, newHigh);
+  }
+}
+
+// ../../packages/core/src/integer.js
 class Integer {
   #value;
   static zero = new Integer(0);
@@ -2094,7 +2568,7 @@ class Integer {
   }
 }
 
-// src/ratreal.js
+// ../../packages/core/src/ratreal.js
 var LN2_CF = [0, 1, 2, 3, 1, 6, 3, 1, 1, 2, 1, 1, 6, 1, 6, 1, 1, 4, 1, 2, 4, 1, 1, 1, 1, 1, 1, 1, 3, 1, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
 var PI_CF = [3, 7, 15, 1, 292, 1, 1, 1, 2, 1, 3, 1, 14, 2, 1, 1, 2, 2, 2, 2, 1, 84, 2, 1, 1, 15, 3, 13, 1, 4, 2, 6, 6, 99, 1, 2, 2, 6, 3, 5, 1, 1, 6, 8, 1, 7, 1, 2, 3, 7, 1, 2, 1, 1, 12, 1, 1, 1, 3, 1, 1, 8, 1, 1, 2, 1, 6];
 var E_CF = [2, 1, 2, 1, 1, 4, 1, 1, 6, 1, 1, 8, 1, 1, 10, 1, 1, 12, 1, 1, 14, 1, 1, 16, 1, 1, 18, 1, 1, 20, 1, 1, 22, 1, 1, 24, 1, 1, 26, 1, 1, 28, 1, 1, 30, 1, 1, 32, 1, 1, 34, 1, 1, 36, 1, 1, 38, 1, 1, 40];
@@ -2604,7 +3078,7 @@ function rationalIntervalPower(base, exponent, precision) {
   }
 }
 
-// src/parser.js
+// ../../packages/parser/src/index.js
 var DEFAULT_PRECISION = -6;
 function parseDecimalUncertainty(str, allowIntegerRangeNotation = true) {
   const uncertaintyMatch = str.match(/^(-?\d*\.?\d*)\[([^\]]+)\]$/);
@@ -4735,462 +5209,6 @@ class Parser {
     return [intPart, ...cfTerms];
   }
 }
-
-// src/fraction.js
-class Fraction {
-  #numerator;
-  #denominator;
-  constructor(numerator, denominator = 1n, options = {}) {
-    if (typeof numerator === "string") {
-      const parts = numerator.trim().split("/");
-      if (parts.length === 1) {
-        this.#numerator = BigInt(parts[0]);
-        this.#denominator = BigInt(denominator);
-      } else if (parts.length === 2) {
-        this.#numerator = BigInt(parts[0]);
-        this.#denominator = BigInt(parts[1]);
-      } else {
-        throw new Error("Invalid fraction format. Use 'a/b' or 'a'");
-      }
-    } else {
-      this.#numerator = BigInt(numerator);
-      this.#denominator = BigInt(denominator);
-    }
-    if (this.#denominator === 0n) {
-      if (options.allowInfinite && (this.#numerator === 1n || this.#numerator === -1n)) {
-        this._isInfinite = true;
-      } else {
-        throw new Error("Denominator cannot be zero");
-      }
-    } else {
-      this._isInfinite = false;
-    }
-  }
-  get numerator() {
-    return this.#numerator;
-  }
-  get denominator() {
-    return this.#denominator;
-  }
-  get isInfinite() {
-    return this._isInfinite || false;
-  }
-  add(other) {
-    if (this.#denominator !== other.denominator) {
-      throw new Error("Addition only supported for equal denominators");
-    }
-    return new Fraction(this.#numerator + other.numerator, this.#denominator);
-  }
-  subtract(other) {
-    if (this.#denominator !== other.denominator) {
-      throw new Error("Subtraction only supported for equal denominators");
-    }
-    return new Fraction(this.#numerator - other.numerator, this.#denominator);
-  }
-  multiply(other) {
-    return new Fraction(this.#numerator * other.numerator, this.#denominator * other.denominator);
-  }
-  divide(other) {
-    if (other.numerator === 0n) {
-      throw new Error("Division by zero");
-    }
-    return new Fraction(this.#numerator * other.denominator, this.#denominator * other.numerator);
-  }
-  pow(exponent) {
-    const n = BigInt(exponent);
-    if (n === 0n) {
-      if (this.#numerator === 0n) {
-        throw new Error("Zero cannot be raised to the power of zero");
-      }
-      return new Fraction(1, 1);
-    }
-    if (this.#numerator === 0n && n < 0n) {
-      throw new Error("Zero cannot be raised to a negative power");
-    }
-    if (n < 0n) {
-      return new Fraction(this.#denominator ** -n, this.#numerator ** -n);
-    }
-    return new Fraction(this.#numerator ** n, this.#denominator ** n);
-  }
-  scale(factor) {
-    const scaleFactor = BigInt(factor);
-    return new Fraction(this.#numerator * scaleFactor, this.#denominator * scaleFactor);
-  }
-  static #gcd(a, b) {
-    a = a < 0n ? -a : a;
-    b = b < 0n ? -b : b;
-    while (b !== 0n) {
-      const temp = b;
-      b = a % b;
-      a = temp;
-    }
-    return a;
-  }
-  reduce() {
-    if (this.#numerator === 0n) {
-      return new Fraction(0, 1);
-    }
-    const gcd = Fraction.#gcd(this.#numerator, this.#denominator);
-    const reducedNum = this.#numerator / gcd;
-    const reducedDen = this.#denominator / gcd;
-    if (reducedDen < 0n) {
-      return new Fraction(-reducedNum, -reducedDen);
-    }
-    return new Fraction(reducedNum, reducedDen);
-  }
-  static mediant(a, b) {
-    return new Fraction(a.numerator + b.numerator, a.denominator + b.denominator);
-  }
-  toRational() {
-    return new Rational(this.#numerator, this.#denominator);
-  }
-  static fromRational(rational) {
-    return new Fraction(rational.numerator, rational.denominator);
-  }
-  toString() {
-    if (this.#denominator === 1n) {
-      return this.#numerator.toString();
-    }
-    return `${this.#numerator}/${this.#denominator}`;
-  }
-  equals(other) {
-    return this.#numerator === other.numerator && this.#denominator === other.denominator;
-  }
-  lessThan(other) {
-    const leftSide = this.#numerator * other.denominator;
-    const rightSide = this.#denominator * other.numerator;
-    return leftSide < rightSide;
-  }
-  lessThanOrEqual(other) {
-    const leftSide = this.#numerator * other.denominator;
-    const rightSide = this.#denominator * other.numerator;
-    return leftSide <= rightSide;
-  }
-  greaterThan(other) {
-    const leftSide = this.#numerator * other.denominator;
-    const rightSide = this.#denominator * other.numerator;
-    return leftSide > rightSide;
-  }
-  greaterThanOrEqual(other) {
-    const leftSide = this.#numerator * other.denominator;
-    const rightSide = this.#denominator * other.numerator;
-    return leftSide >= rightSide;
-  }
-  E(exponent) {
-    const exp = BigInt(exponent);
-    if (exp >= 0n) {
-      const newNumerator = this.#numerator * 10n ** exp;
-      return new Fraction(newNumerator, this.#denominator);
-    } else {
-      const newDenominator = this.#denominator * 10n ** -exp;
-      return new Fraction(this.#numerator, newDenominator);
-    }
-  }
-  mediant(other) {
-    if (this.isInfinite && other.isInfinite) {
-      if (this.#numerator === -1n && other.numerator === 1n) {
-        return new Fraction(0n, 1n);
-      } else if (this.#numerator === 1n && other.numerator === -1n) {
-        return new Fraction(0n, 1n);
-      }
-      throw new Error("Cannot compute mediant of two infinite fractions");
-    }
-    if (this.isInfinite || other.isInfinite) {
-      const newNum2 = this.#numerator + other.numerator;
-      const newDen2 = this.#denominator + other.denominator;
-      if (newNum2 === 0n && newDen2 === 0n) {
-        throw new Error("Mediant would result in 0/0");
-      }
-      return new Fraction(newNum2, newDen2);
-    }
-    const newNum = this.#numerator + other.numerator;
-    const newDen = this.#denominator + other.denominator;
-    return new Fraction(newNum, newDen);
-  }
-  fareyParents() {
-    if (this.isInfinite) {
-      throw new Error("Cannot find Farey parents of infinite fraction");
-    }
-    if (this.#numerator === 0n && this.#denominator === 1n) {
-      const left = new Fraction(-1n, 0n, { allowInfinite: true });
-      const right = new Fraction(1n, 0n, { allowInfinite: true });
-      return { left, right };
-    }
-    let leftBound = new Fraction(-1n, 0n, { allowInfinite: true });
-    let rightBound = new Fraction(1n, 0n, { allowInfinite: true });
-    let current = new Fraction(0n, 1n);
-    while (!current.equals(this)) {
-      if (this.lessThan(current)) {
-        rightBound = current;
-        current = leftBound.mediant(current);
-      } else {
-        leftBound = current;
-        current = current.mediant(rightBound);
-      }
-    }
-    return { left: leftBound, right: rightBound };
-  }
-  _extendedGcd(a, b) {
-    if (b === 0n) {
-      return { gcd: a, x: 1n, y: 0n };
-    }
-    const result = this._extendedGcd(b, a % b);
-    const x = result.y;
-    const y = result.x - a / b * result.y;
-    return { gcd: result.gcd, x, y };
-  }
-  static mediantPartner(endpoint, mediant) {
-    if (endpoint.isInfinite || mediant.isInfinite) {
-      throw new Error("Cannot compute mediant partner with infinite fractions");
-    }
-    const p = endpoint.numerator;
-    const q = endpoint.denominator;
-    const a = mediant.numerator;
-    const b = mediant.denominator;
-    const s = 1n;
-    const numerator = a * (q + s) - b * p;
-    if (numerator % b !== 0n) {
-      const r2 = a * 2n - p;
-      const s_calculated = b * 2n - q;
-      return new Fraction(r2, s_calculated);
-    }
-    const r = numerator / b;
-    return new Fraction(r, s);
-  }
-  static isMediantTriple(left, mediant, right) {
-    if (mediant.isInfinite) {
-      return false;
-    }
-    if (left.isInfinite && right.isInfinite) {
-      return false;
-    }
-    try {
-      const computedMediant = left.mediant(right);
-      return mediant.equals(computedMediant);
-    } catch (error) {
-      return false;
-    }
-  }
-  static isFareyTriple(left, mediant, right) {
-    if (!Fraction.isMediantTriple(left, mediant, right)) {
-      return false;
-    }
-    if (!left.isInfinite && !right.isInfinite) {
-      const a = left.numerator;
-      const b = left.denominator;
-      const c = right.numerator;
-      const d = right.denominator;
-      const determinant = a * d - b * c;
-      return determinant === 1n || determinant === -1n;
-    }
-    return left.isInfinite || right.isInfinite;
-  }
-  sternBrocotParent() {
-    if (this.isInfinite) {
-      throw new Error("Infinite fractions don't have parents in Stern-Brocot tree");
-    }
-    if (this.numerator === 0n && this.denominator === 1n) {
-      return null;
-    }
-    const path = this.sternBrocotPath();
-    if (path.length === 0) {
-      return null;
-    }
-    const parentPath = path.slice(0, -1);
-    return Fraction.fromSternBrocotPath(parentPath);
-  }
-  sternBrocotChildren() {
-    if (this.isInfinite) {
-      throw new Error("Infinite fractions don't have children in Stern-Brocot tree");
-    }
-    const currentPath = this.sternBrocotPath();
-    const leftPath = [...currentPath, "L"];
-    const rightPath = [...currentPath, "R"];
-    return {
-      left: Fraction.fromSternBrocotPath(leftPath),
-      right: Fraction.fromSternBrocotPath(rightPath)
-    };
-  }
-  sternBrocotPath() {
-    if (this.isInfinite) {
-      throw new Error("Infinite fractions don't have tree paths");
-    }
-    const reduced = this.reduce();
-    if (reduced.numerator === 0n && reduced.denominator === 1n) {
-      return [];
-    }
-    let left = new Fraction(-1, 0, { allowInfinite: true });
-    let right = new Fraction(1, 0, { allowInfinite: true });
-    let current = new Fraction(0, 1);
-    const path = [];
-    while (!current.equals(reduced)) {
-      if (reduced.lessThan(current)) {
-        path.push("L");
-        right = current;
-        current = left.mediant(current);
-      } else {
-        path.push("R");
-        left = current;
-        current = current.mediant(right);
-      }
-      if (path.length > 500) {
-        throw new Error("Stern-Brocot path too long - this may indicate a bug in the algorithm");
-      }
-    }
-    return path;
-  }
-  static fromSternBrocotPath(path) {
-    let left = new Fraction(-1, 0, { allowInfinite: true });
-    let right = new Fraction(1, 0, { allowInfinite: true });
-    let current = new Fraction(0, 1);
-    for (const direction of path) {
-      if (direction === "L") {
-        right = current;
-        current = left.mediant(current);
-      } else if (direction === "R") {
-        left = current;
-        current = current.mediant(right);
-      } else {
-        throw new Error(`Invalid direction in path: ${direction}`);
-      }
-    }
-    return current;
-  }
-  isSternBrocotValid() {
-    if (this.isInfinite) {
-      return this.numerator === 1n || this.numerator === -1n;
-    }
-    try {
-      const path = this.sternBrocotPath();
-      const reconstructed = Fraction.fromSternBrocotPath(path);
-      return this.equals(reconstructed);
-    } catch (error) {
-      return false;
-    }
-  }
-  sternBrocotDepth() {
-    if (this.isInfinite) {
-      return Infinity;
-    }
-    if (this.numerator === 0n && this.denominator === 1n) {
-      return 0;
-    }
-    return this.sternBrocotPath().length;
-  }
-  sternBrocotAncestors() {
-    if (this.isInfinite) {
-      return [];
-    }
-    const ancestors = [];
-    const path = this.sternBrocotPath();
-    for (let i = 0;i < path.length; i++) {
-      const partialPath = path.slice(0, i);
-      ancestors.push(Fraction.fromSternBrocotPath(partialPath));
-    }
-    ancestors.reverse();
-    return ancestors;
-  }
-}
-
-// src/fraction-interval.js
-class FractionInterval {
-  #low;
-  #high;
-  constructor(a, b) {
-    if (!(a instanceof Fraction) || !(b instanceof Fraction)) {
-      throw new Error("FractionInterval endpoints must be Fraction objects");
-    }
-    if (a.lessThanOrEqual(b)) {
-      this.#low = a;
-      this.#high = b;
-    } else {
-      this.#low = b;
-      this.#high = a;
-    }
-  }
-  get low() {
-    return this.#low;
-  }
-  get high() {
-    return this.#high;
-  }
-  mediantSplit() {
-    const mediant = Fraction.mediant(this.#low, this.#high);
-    return [
-      new FractionInterval(this.#low, mediant),
-      new FractionInterval(mediant, this.#high)
-    ];
-  }
-  partitionWithMediants(n = 1) {
-    if (n < 0) {
-      throw new Error("Depth of mediant partitioning must be non-negative");
-    }
-    if (n === 0) {
-      return [this];
-    }
-    let intervals = [this];
-    for (let level = 0;level < n; level++) {
-      const newIntervals = [];
-      for (const interval of intervals) {
-        const splitIntervals = interval.mediantSplit();
-        newIntervals.push(...splitIntervals);
-      }
-      intervals = newIntervals;
-    }
-    return intervals;
-  }
-  partitionWith(fn) {
-    const partitionPoints = fn(this.#low, this.#high);
-    if (!Array.isArray(partitionPoints)) {
-      throw new Error("Partition function must return an array of Fractions");
-    }
-    for (const point of partitionPoints) {
-      if (!(point instanceof Fraction)) {
-        throw new Error("Partition function must return Fraction objects");
-      }
-    }
-    const allPoints = [this.#low, ...partitionPoints, this.#high];
-    allPoints.sort((a, b) => {
-      if (a.equals(b))
-        return 0;
-      if (a.lessThan(b))
-        return -1;
-      return 1;
-    });
-    if (!allPoints[0].equals(this.#low) || !allPoints[allPoints.length - 1].equals(this.#high)) {
-      throw new Error("Partition points should be within the interval");
-    }
-    const uniquePoints = [];
-    for (let i = 0;i < allPoints.length; i++) {
-      if (i === 0 || !allPoints[i].equals(allPoints[i - 1])) {
-        uniquePoints.push(allPoints[i]);
-      }
-    }
-    const intervals = [];
-    for (let i = 0;i < uniquePoints.length - 1; i++) {
-      intervals.push(new FractionInterval(uniquePoints[i], uniquePoints[i + 1]));
-    }
-    return intervals;
-  }
-  toRationalInterval() {
-    return new RationalInterval(this.#low.toRational(), this.#high.toRational());
-  }
-  static fromRationalInterval(interval) {
-    return new FractionInterval(Fraction.fromRational(interval.low), Fraction.fromRational(interval.high));
-  }
-  toString() {
-    return `${this.#low.toString()}:${this.#high.toString()}`;
-  }
-  equals(other) {
-    return this.#low.equals(other.low) && this.#high.equals(other.high);
-  }
-  E(exponent) {
-    const newLow = this.#low.E(exponent);
-    const newHigh = this.#high.E(exponent);
-    return new FractionInterval(newLow, newHigh);
-  }
-}
-
 // src/var.js
 class VariableManager {
   constructor() {
@@ -6576,6 +6594,10 @@ class WebCalculator {
     this.mobileInput = "";
     this.mobileKeypadSetup = false;
     this.variableManager = new VariableManager;
+    this.inputBase = BaseSystem.DECIMAL;
+    this.outputBases = [BaseSystem.DECIMAL];
+    this.customBases = new Map;
+    this.variableManager.setCustomBases(this.customBases);
     this.currentVisualization = null;
     this.lastResult = null;
     this.initializeElements();
@@ -6710,6 +6732,31 @@ class WebCalculator {
     this.historyIndex = -1;
     this.currentEntry = { input, output: "", isError: false };
     this.addToOutput(input, null, false);
+    const baseDefMatch = input.match(/^\[(\d+)\]\s*=\s*(.+)$/);
+    if (baseDefMatch) {
+      const baseNum = parseInt(baseDefMatch[1]);
+      const range = baseDefMatch[2].trim();
+      try {
+        if (isNaN(baseNum) || baseNum < 2) {
+          throw new Error("Base number must be an integer >= 2");
+        }
+        const newBase = new BaseSystem(range, `Custom Base ${baseNum}`);
+        if (newBase.base !== baseNum) {
+          throw new Error(`Character sequence length (${newBase.base}) does not match declared base [${baseNum}]`);
+        }
+        this.customBases.set(baseNum, newBase);
+        const output = `Defined custom base [${baseNum}] with characters "${range}"`;
+        this.addToOutput("", output, false);
+        this.finishEntry(output);
+      } catch (error) {
+        const output = `Error defining base: ${error.message}`;
+        this.addToOutput("", output, true);
+        this.currentEntry.isError = true;
+        this.finishEntry(output);
+      }
+      this.inputElement.value = "";
+      return;
+    }
     const upperInput = input.toUpperCase();
     if (upperInput === "HELP") {
       this.showHelp();
@@ -6829,6 +6876,56 @@ class WebCalculator {
       this.inputElement.value = "";
       return;
     }
+    if (upperInput.startsWith("BASE") && upperInput !== "BASES") {
+      this.handleBaseCommand(upperInput);
+      this.inputElement.value = "";
+      return;
+    }
+    if (upperInput === "BIN") {
+      this.inputBase = BaseSystem.BINARY;
+      this.outputBases = [BaseSystem.BINARY];
+      this.variableManager.setInputBase(BaseSystem.BINARY);
+      const output = "Base set to binary (base 2)";
+      this.addToOutput("", output, false);
+      this.finishEntry(output);
+      this.inputElement.value = "";
+      return;
+    }
+    if (upperInput === "HEX") {
+      this.inputBase = BaseSystem.HEXADECIMAL;
+      this.outputBases = [BaseSystem.HEXADECIMAL];
+      this.variableManager.setInputBase(BaseSystem.HEXADECIMAL);
+      const output = "Base set to hexadecimal (base 16)";
+      this.addToOutput("", output, false);
+      this.finishEntry(output);
+      this.inputElement.value = "";
+      return;
+    }
+    if (upperInput === "OCT") {
+      this.inputBase = BaseSystem.OCTAL;
+      this.outputBases = [BaseSystem.OCTAL];
+      this.variableManager.setInputBase(BaseSystem.OCTAL);
+      const output = "Base set to octal (base 8)";
+      this.addToOutput("", output, false);
+      this.finishEntry(output);
+      this.inputElement.value = "";
+      return;
+    }
+    if (upperInput === "DEC") {
+      this.inputBase = BaseSystem.DECIMAL;
+      this.outputBases = [BaseSystem.DECIMAL];
+      this.variableManager.setInputBase(BaseSystem.DECIMAL);
+      const output = "Base set to decimal (base 10)";
+      this.addToOutput("", output, false);
+      this.finishEntry(output);
+      this.inputElement.value = "";
+      return;
+    }
+    if (upperInput === "BASES") {
+      this.showBases();
+      this.inputElement.value = "";
+      return;
+    }
     const varResult = this.variableManager.processInput(input);
     if (varResult.type === "error") {
       this.addToOutput("", varResult.message, true);
@@ -6895,28 +6992,44 @@ class WebCalculator {
     const period = repeatingInfo.period;
     const decimal = this.formatDecimal(rational);
     const fraction = this.mixedDisplay ? rational.toMixedString() : rational.toString();
-    const isTerminatingDecimal = repeatingDecimal.endsWith("#0");
-    const displayDecimal = isTerminatingDecimal ? repeatingDecimal : this.formatRepeatingDecimal(rational);
-    const periodInfo = period > 0 ? ` {period: ${period}}` : "";
+    const displayDecimal = this.formatRepeatingExpansion(repeatingDecimal);
+    const periodInfo = period === -1 ? " [period > 10^7]" : period > 0 ? ` {period: ${period}}` : "";
+    let baseRepresentation = "";
+    if (this.outputBases.some((base) => base.base !== 10)) {
+      const baseReprs = [];
+      for (const base of this.outputBases) {
+        if (base.base !== 10) {
+          try {
+            const { baseStr, period: basePeriod } = rational.toRepeatingBaseWithPeriod(base);
+            const formattedBaseStr = this.formatRepeatingExpansion(baseStr);
+            const basePeriodInfo = basePeriod === -1 ? " [period > 10^6]" : basePeriod > 0 ? ` {period: ${basePeriod}}` : "";
+            baseReprs.push(`${formattedBaseStr}[${base.base}]${basePeriodInfo}`);
+          } catch (error) {}
+        }
+      }
+      if (baseReprs.length > 0) {
+        baseRepresentation = ` (${baseReprs.join(", ")})`;
+      }
+    }
     switch (this.outputMode) {
       case "DECI":
-        return `${displayDecimal}${periodInfo}`;
+        return `${displayDecimal}${periodInfo}${baseRepresentation}`;
       case "RAT":
-        return fraction;
+        return `${fraction}${baseRepresentation}`;
       case "SCI":
         const scientificNotation = rational.toScientificNotation(true, this.sciPrecision, this.showPeriodInfo);
-        return `${scientificNotation} (${fraction})`;
+        return `${scientificNotation} (${fraction})${baseRepresentation}`;
       case "CF":
         const continuedFraction = rational.toContinuedFractionString();
-        return `${continuedFraction} (${fraction})`;
+        return `${continuedFraction} (${fraction})${baseRepresentation}`;
       case "BOTH":
-        if (fraction.includes("/")) {
-          return `${displayDecimal}${periodInfo} (${fraction})`;
+        if (fraction.includes("/") || fraction.includes("..")) {
+          return `${displayDecimal}${periodInfo} (${fraction})${baseRepresentation}`;
         } else {
-          return decimal;
+          return `${decimal}${baseRepresentation}`;
         }
       default:
-        return `${displayDecimal}${periodInfo} (${fraction})`;
+        return `${displayDecimal}${periodInfo} (${fraction})${baseRepresentation}`;
     }
   }
   formatDecimal(rational) {
@@ -6929,13 +7042,18 @@ class WebCalculator {
     }
     return decimal;
   }
-  formatRepeatingDecimal(rational) {
-    const repeatingDecimal = rational.toRepeatingDecimal();
-    if (!repeatingDecimal.includes("#")) {
-      return repeatingDecimal;
+  formatRepeatingExpansion(expansion) {
+    if (!expansion.includes("#")) {
+      if (expansion.length > this.decimalLimit + 2) {
+        const dotIndex = expansion.indexOf(".");
+        if (dotIndex !== -1 && expansion.length - dotIndex - 1 > this.decimalLimit) {
+          return expansion.substring(0, dotIndex + this.decimalLimit + 1) + "...";
+        }
+      }
+      return expansion;
     }
-    if (repeatingDecimal.endsWith("#0")) {
-      const withoutRepeating = repeatingDecimal.substring(0, repeatingDecimal.length - 2);
+    if (expansion.endsWith("#0")) {
+      const withoutRepeating = expansion.substring(0, expansion.length - 2);
       if (withoutRepeating.length > this.decimalLimit + 2) {
         const dotIndex = withoutRepeating.indexOf(".");
         if (dotIndex !== -1 && withoutRepeating.length - dotIndex - 1 > this.decimalLimit) {
@@ -6944,10 +7062,10 @@ class WebCalculator {
       }
       return withoutRepeating;
     }
-    if (repeatingDecimal.length > this.decimalLimit + 2) {
-      const hashIndex = repeatingDecimal.indexOf("#");
-      const beforeHash = repeatingDecimal.substring(0, hashIndex);
-      const afterHash = repeatingDecimal.substring(hashIndex + 1);
+    if (expansion.length > this.decimalLimit + 2) {
+      const hashIndex = expansion.indexOf("#");
+      const beforeHash = expansion.substring(0, hashIndex);
+      const afterHash = expansion.substring(hashIndex + 1);
       if (beforeHash.length > this.decimalLimit + 1) {
         return beforeHash.substring(0, this.decimalLimit + 1) + "...";
       }
@@ -6958,7 +7076,7 @@ class WebCalculator {
         return beforeHash + "#" + afterHash.substring(0, remainingSpace - 1) + "...";
       }
     }
-    return repeatingDecimal;
+    return expansion;
   }
   formatInterval(interval) {
     const lowRepeatingInfo = interval.low.toRepeatingDecimalWithPeriod();
@@ -6967,14 +7085,10 @@ class WebCalculator {
     const highRepeating = highRepeatingInfo.decimal;
     const lowPeriod = lowRepeatingInfo.period;
     const highPeriod = highRepeatingInfo.period;
-    const lowDecimal = this.formatDecimal(interval.low);
-    const highDecimal = this.formatDecimal(interval.high);
     const lowFraction = interval.low.toString();
     const highFraction = interval.high.toString();
-    const lowIsTerminating = lowRepeating.endsWith("#0");
-    const highIsTerminating = highRepeating.endsWith("#0");
-    const lowDisplay = lowIsTerminating ? lowRepeating.substring(0, lowRepeating.length - 2) : this.formatRepeatingDecimal(interval.low);
-    const highDisplay = highIsTerminating ? highRepeating.substring(0, highRepeating.length - 2) : this.formatRepeatingDecimal(interval.high);
+    const lowDisplay = this.formatRepeatingExpansion(lowRepeating);
+    const highDisplay = this.formatRepeatingExpansion(highRepeating);
     let periodInfo = "";
     if (lowPeriod > 0 || highPeriod > 0) {
       const periodParts = [];
@@ -7539,8 +7653,140 @@ class WebCalculator {
       this.hideVisualization();
     }
   }
-  parseOperationExpression(expression) {
-    return this.parseExpressionTree(expression);
+  handleBaseCommand(command) {
+    const parts = command.split(/\s+/);
+    if (parts.length === 1) {
+      let output;
+      if (this.outputBases.length === 1 && this.inputBase.equals(this.outputBases[0])) {
+        output = `Current base: ${this.inputBase.name} (base ${this.inputBase.base})`;
+      } else {
+        output = `Input base: ${this.inputBase.name} (base ${this.inputBase.base})
+` + `Output base${this.outputBases.length > 1 ? "s" : ""}: ${this.outputBases.map((b) => `${b.name} (base ${b.base})`).join(", ")}`;
+      }
+      this.addToOutput("", output, false);
+      this.finishEntry(output);
+      return;
+    }
+    const baseSpec = parts.slice(1).join(" ");
+    if (baseSpec.includes("->")) {
+      this.handleInputOutputBaseCommand(baseSpec);
+      return;
+    }
+    this.handleLegacyBaseCommand(baseSpec);
+  }
+  handleInputOutputBaseCommand(baseSpec) {
+    const [inputSpec, outputSpec] = baseSpec.split("->", 2);
+    if (!inputSpec.trim() || !outputSpec.trim()) {
+      const output2 = "Error: Invalid input->output format. Use BASE 3->10 or BASE 3->[10,5,3]";
+      this.addToOutput("", output2, true);
+      this.currentEntry.isError = true;
+      this.finishEntry(output2);
+      return;
+    }
+    try {
+      this.inputBase = this.parseBaseSpec(inputSpec.trim());
+      this.variableManager.setInputBase(this.inputBase);
+    } catch (error) {
+      const output2 = `Error parsing input base: ${error.message}`;
+      this.addToOutput("", output2, true);
+      this.currentEntry.isError = true;
+      this.finishEntry(output2);
+      return;
+    }
+    try {
+      const trimmedOutput = outputSpec.trim();
+      if (trimmedOutput.startsWith("[") && trimmedOutput.endsWith("]")) {
+        const baseSpecs = trimmedOutput.slice(1, -1).split(",").map((s) => s.trim());
+        if (baseSpecs.length === 0) {
+          throw new Error("Empty output base list");
+        }
+        this.outputBases = baseSpecs.map((spec) => this.parseBaseSpec(spec));
+      } else {
+        this.outputBases = [this.parseBaseSpec(trimmedOutput)];
+      }
+    } catch (error) {
+      const output2 = `Error parsing output base(s): ${error.message}`;
+      this.addToOutput("", output2, true);
+      this.currentEntry.isError = true;
+      this.finishEntry(output2);
+      return;
+    }
+    const outputBaseNames = this.outputBases.map((b) => `${b.name} (base ${b.base})`).join(", ");
+    const output = `Input base: ${this.inputBase.name} (base ${this.inputBase.base})
+` + `Output base${this.outputBases.length > 1 ? "s" : ""}: ${outputBaseNames}`;
+    this.addToOutput("", output, false);
+    this.finishEntry(output);
+  }
+  handleLegacyBaseCommand(baseSpec) {
+    try {
+      const base = this.parseBaseSpec(baseSpec);
+      this.inputBase = base;
+      this.outputBases = [base];
+      this.variableManager.setInputBase(base);
+      const output = `Base set to ${base.name} (base ${base.base})`;
+      this.addToOutput("", output, false);
+      this.finishEntry(output);
+    } catch (error) {
+      const output = `Error: ${error.message}`;
+      this.addToOutput("", output, true);
+      this.currentEntry.isError = true;
+      this.finishEntry(output);
+    }
+  }
+  parseBaseSpec(baseSpec) {
+    const numericBase = parseInt(baseSpec);
+    if (!isNaN(numericBase) && /^\d+$/.test(baseSpec.trim())) {
+      if (this.customBases.has(numericBase)) {
+        return this.customBases.get(numericBase);
+      }
+      if (numericBase < 2) {
+        throw new Error("Base must be at least 2");
+      }
+      if (numericBase > 62) {
+        throw new Error("Numeric bases must be 62 or less. Use character sequence for larger bases.");
+      }
+      return BaseSystem.fromBase(numericBase);
+    }
+    if (baseSpec.includes("-") || /[a-zA-Z]/.test(baseSpec)) {
+      return new BaseSystem(baseSpec, `Custom Base ${baseSpec}`);
+    }
+    throw new Error("Invalid base specification. Use a number (2-62) or character sequence with dashes (e.g., '0-9a-f')");
+  }
+  showBases() {
+    let output = `Available base systems:
+
+Standard bases:
+`;
+    output += `  Binary (BIN):       base 2
+`;
+    output += `  Octal (OCT):        base 8
+`;
+    output += `  Decimal (DEC):      base 10
+`;
+    output += `  Hexadecimal (HEX):  base 16
+`;
+    output += `  Base 36:            base 36
+`;
+    output += `  Base 62:            base 62
+
+`;
+    output += `Base commands:
+`;
+    output += `  BASE                - Show current base
+`;
+    output += `  BASE <n>            - Set base to n (2-62)
+`;
+    output += `  BASE <sequence>     - Set custom base using character sequence
+`;
+    output += `  BASE <in>-><out>    - Set input base <in> and output base <out>
+`;
+    output += `  BASE <in>->[<out1>,<out2>,...] - Set input base and multiple output bases
+`;
+    output += `  BIN, HEX, OCT, DEC  - Quick base shortcuts
+`;
+    output += "  BASES               - Show this help";
+    this.addToOutput("", output, false);
+    this.finishEntry(output);
   }
   parseExpressionTree(expr) {
     expr = expr.trim();

@@ -5,8 +5,8 @@
  * Supports rational arithmetic, intervals, and various output formats.
  */
 
-import { Rational, RationalInterval, Integer, BaseSystem } from "ratmath";
-import { Parser } from "ratmath-parser";
+import { Rational, RationalInterval, Integer, BaseSystem } from "@ratmath/core";
+import { Parser } from "@ratmath/parser";
 import { VariableManager } from "./var.js";
 import { IntervalVisualization, OperationVisualization, MultiStepVisualization } from "./IntervalVisualization.js";
 

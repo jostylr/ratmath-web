@@ -5,8 +5,8 @@
  * relationships between rational numbers in the infinite binary tree structure.
  */
 
-import { Fraction } from "ratmath";
-import { Parser } from "ratmath-parser";
+import { Fraction } from "@ratmath/core";
+import { Parser } from "@ratmath/parser";
 
 class SternBrocotTreeVisualizer {
   constructor() {

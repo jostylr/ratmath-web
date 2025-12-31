@@ -1,16 +1,20 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>RatCalc - Exact Rational Calculator</title>
-  <meta name="description" content="RatCalc - Interactive calculator for exact rational arithmetic and interval arithmetic using the RatMath library">
+  <meta name="description"
+    content="RatCalc - Interactive calculator for exact rational arithmetic and interval arithmetic using the RatMath library">
   <meta name="keywords" content="calculator, rational, arithmetic, fractions, exact, mathematics, intervals">
   <meta name="author" content="James Taylor">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧮</text></svg>">
+  <link rel="icon"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧮</text></svg>">
   <link rel="stylesheet" href="calc.css">
 </head>
 </edits>
+
 <body>
   <a href="index.html" class="home-link" title="RatMath Home">
     <img src="logo.svg" alt="RatMath Logo" width="40" height="40">
@@ -26,7 +30,8 @@
 
       <div class="input-section">
         <div class="prompt">></div>
-        <input type="text" id="calculatorInput" class="calculator-input" placeholder="Enter expression (type HELP for help)" autocomplete="off" spellcheck="false">
+        <input type="text" id="calculatorInput" class="calculator-input"
+          placeholder="Enter expression (type HELP for help)" autocomplete="off" spellcheck="false">
       </div>
 
       <div id="mobileInputDisplay" class="mobile"></div>
@@ -34,50 +39,50 @@
 
       <!-- Mobile Keypad -->
       <div id="mobileKeypad" class="mobile-keypad mobile">
-          <div id="keypadGrid" class="keypad-grid">
-            <!-- Row 1 -->
-            <button class="keypad-btn" data-key="7">7</button>
-            <button class="keypad-btn" data-key="8">8</button>
-            <button class="keypad-btn" data-key="9">9</button>
-            <button class="keypad-btn" data-key="(">(</button>
-            <button class="keypad-btn" data-key=")">)</button>
+        <div id="keypadGrid" class="keypad-grid">
+          <!-- Row 1 -->
+          <button class="keypad-btn" data-key="7">7</button>
+          <button class="keypad-btn" data-key="8">8</button>
+          <button class="keypad-btn" data-key="9">9</button>
+          <button class="keypad-btn" data-key="(">(</button>
+          <button class="keypad-btn" data-key=")">)</button>
 
-            <!-- Row 2 -->
-            <button class="keypad-btn" data-key="4">4</button>
-            <button class="keypad-btn" data-key="5">5</button>
-            <button class="keypad-btn" data-key="6">6</button>
-            <button class="keypad-btn" data-key="*">×</button>
-            <button class="keypad-btn" data-key="/">÷</button>
+          <!-- Row 2 -->
+          <button class="keypad-btn" data-key="4">4</button>
+          <button class="keypad-btn" data-key="5">5</button>
+          <button class="keypad-btn" data-key="6">6</button>
+          <button class="keypad-btn" data-key="*">×</button>
+          <button class="keypad-btn" data-key="/">÷</button>
 
-            <!-- Row 3 -->
-            <button class="keypad-btn" data-key="1">1</button>
-            <button class="keypad-btn" data-key="2">2</button>
-            <button class="keypad-btn" data-key="3">3</button>
-            <button class="keypad-btn" data-key="+">+</button>
-            <button class="keypad-btn" data-key="-">−</button>
+          <!-- Row 3 -->
+          <button class="keypad-btn" data-key="1">1</button>
+          <button class="keypad-btn" data-key="2">2</button>
+          <button class="keypad-btn" data-key="3">3</button>
+          <button class="keypad-btn" data-key="+">+</button>
+          <button class="keypad-btn" data-key="-">−</button>
 
-            <!-- Row 4 -->
-            <button class="keypad-btn" data-key="0">0</button>
-            <button class="keypad-btn" data-key=".">.</button>
-            <button class="keypad-btn" data-key=",">,</button>
-            <button class="keypad-btn" data-key=":">:</button>
-            <button class="keypad-btn" data-key="#">#</button>
+          <!-- Row 4 -->
+          <button class="keypad-btn" data-key="0">0</button>
+          <button class="keypad-btn" data-key=".">.</button>
+          <button class="keypad-btn" data-key=",">,</button>
+          <button class="keypad-btn" data-key=":">:</button>
+          <button class="keypad-btn" data-key="#">#</button>
 
-            <!-- Row 5 -->
-            <button class="keypad-btn" data-key="[">[</button>
-            <button class="keypad-btn" data-key="]">]</button>
-            <button class="keypad-btn" data-key=" ">SPC</button>
-            <button class="keypad-btn" data-key="^">^</button>
-            <button class="keypad-btn" data-key="!">!</button>
+          <!-- Row 5 -->
+          <button class="keypad-btn" data-key="[">[</button>
+          <button class="keypad-btn" data-key="]">]</button>
+          <button class="keypad-btn" data-key=" ">SPC</button>
+          <button class="keypad-btn" data-key="^">^</button>
+          <button class="keypad-btn" data-key="!">!</button>
 
-            <!-- Row 6 - Action buttons -->
-            <button class="keypad-btn keypad-backspace" data-action="backspace">⌫</button>
-            <button class="keypad-btn keypad-clear" data-action="clear">CLR</button>
-            <button class="keypad-btn keypad-enter" data-action="enter">↵</button>
-            <button class="keypad-btn keypad-help" data-action="help">?</button>
-            <button class="keypad-btn keypad-command" data-action="command">CMD</button>
-          </div>
+          <!-- Row 6 - Action buttons -->
+          <button class="keypad-btn keypad-backspace" data-action="backspace">⌫</button>
+          <button class="keypad-btn keypad-clear" data-action="clear">CLR</button>
+          <button class="keypad-btn keypad-enter" data-action="enter">↵</button>
+          <button class="keypad-btn keypad-help" data-action="help">?</button>
+          <button class="keypad-btn keypad-command" data-action="command">CMD</button>
         </div>
+      </div>
     </div>
 
 
@@ -93,24 +98,24 @@
 
 
 
-    <!-- Command Panel -->
-    <div id="commandPanel" class="command-panel">
-      <div class="command-panel-header">
-        <h3>Commands</h3>
-        <button id="closeCommandPanel" class="close-command-panel">×</button>
-      </div>
-      <div class="command-buttons">
-        <button class="command-btn" data-command="HELP">HELP</button>
-        <button class="command-btn" data-command="DECI">DECI</button>
-        <button class="command-btn" data-command="RAT">RAT</button>
-        <button class="command-btn" data-command="BOTH">BOTH</button>
-        <button class="command-btn" data-command="SCI">SCI</button>
-        <button class="command-btn" data-command="CF">CF</button>
-        <button class="command-btn" data-command="MIX">MIX</button>
-        <button class="command-btn" data-command="LIMIT ">LIMIT</button>
-        <button class="command-btn" data-command="CLEAR">CLEAR</button>
-      </div>
+  <!-- Command Panel -->
+  <div id="commandPanel" class="command-panel">
+    <div class="command-panel-header">
+      <h3>Commands</h3>
+      <button id="closeCommandPanel" class="close-command-panel">×</button>
     </div>
+    <div class="command-buttons">
+      <button class="command-btn" data-command="HELP">HELP</button>
+      <button class="command-btn" data-command="DECI">DECI</button>
+      <button class="command-btn" data-command="RAT">RAT</button>
+      <button class="command-btn" data-command="BOTH">BOTH</button>
+      <button class="command-btn" data-command="SCI">SCI</button>
+      <button class="command-btn" data-command="CF">CF</button>
+      <button class="command-btn" data-command="MIX">MIX</button>
+      <button class="command-btn" data-command="LIMIT ">LIMIT</button>
+      <button class="command-btn" data-command="CLEAR">CLEAR</button>
+    </div>
+  </div>
   </div>
 
   <!-- Visualization Modal -->
@@ -280,6 +285,7 @@
     </div>
   </div>
 
-  <script type="module" src="src/web-calc.js"></script>
+  <script type="module" src="calc.js"></script>
 </body>
+
 </html>
