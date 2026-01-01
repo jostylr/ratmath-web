@@ -1,6 +1,6 @@
 import { describe, it, test, expect } from "bun:test";
-import { Rational, RationalInterval } from "@ratmath/core/";
-import { PI, E, SIN, COS, ARCSIN, ARCCOS, EXP, LN, LOG, newtonRoot, rationalIntervalPower } from "@ratmath/core";
+import { Rational, RationalInterval } from "@ratmath/core";
+import { PI, E, SIN, COS, ARCSIN, ARCCOS, EXP, LN, LOG, newtonRoot, rationalIntervalPower } from "@ratmath/reals";
 import { Parser } from "@ratmath/parser";
 
 // Test constants

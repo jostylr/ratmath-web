@@ -7,7 +7,7 @@
 
 import { Rational, RationalInterval, Integer, BaseSystem } from "@ratmath/core";
 import { Parser } from "@ratmath/parser";
-import { VariableManager } from "./var.js";
+import { VariableManager } from "@ratmath/algebra";
 import { IntervalVisualization, OperationVisualization, MultiStepVisualization } from "./IntervalVisualization.js";
 
 class WebCalculator {
