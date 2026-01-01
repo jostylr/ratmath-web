@@ -20,8 +20,17 @@ class BaseSystem {
     "#",
     "~"
   ]);
-  constructor(characterSequence, name) {
-    this.#characters = this.#parseCharacterSequence(characterSequence);
+  constructor(characters, name) {
+    if (typeof characters === "string") {
+      this.#characters = characters.split("");
+    } else if (Array.isArray(characters)) {
+      this.#characters = [...characters];
+    } else {
+      throw new Error("Characters must be a string or array of strings");
+    }
+    if (this.#characters.length < 2) {
+      throw new Error("Base system must have at least 2 characters");
+    }
     this.#base = this.#characters.length;
     this.#charMap = this.#createCharacterMap();
     this.#name = name || `Base ${this.#base}`;
@@ -46,39 +55,6 @@ class BaseSystem {
   }
   get name() {
     return this.#name;
-  }
-  #parseCharacterSequence(sequence) {
-    if (typeof sequence !== "string" || sequence.length === 0) {
-      throw new Error("Character sequence must be a non-empty string");
-    }
-    const characters = [];
-    let i = 0;
-    while (i < sequence.length) {
-      if (i + 2 < sequence.length && sequence[i + 1] === "-") {
-        const startChar = sequence[i];
-        const endChar = sequence[i + 2];
-        const startCode = startChar.charCodeAt(0);
-        const endCode = endChar.charCodeAt(0);
-        if (startCode > endCode) {
-          throw new Error(`Invalid range: '${startChar}-${endChar}'. Start character must come before end character.`);
-        }
-        for (let code = startCode;code <= endCode; code++) {
-          characters.push(String.fromCharCode(code));
-        }
-        i += 3;
-      } else {
-        characters.push(sequence[i]);
-        i++;
-      }
-    }
-    const uniqueChars = new Set(characters);
-    if (uniqueChars.size !== characters.length) {
-      throw new Error("Character sequence contains duplicate characters");
-    }
-    if (characters.length < 2) {
-      throw new Error("Base system must have at least 2 characters");
-    }
-    return characters;
   }
   #createCharacterMap() {
     const map = new Map;
@@ -234,51 +210,62 @@ class BaseSystem {
     if (!Number.isInteger(base) || base < 2) {
       throw new Error("Base must be an integer >= 2");
     }
-    let sequence;
-    if (base <= 10) {
-      sequence = `0-${base - 1}`;
-    } else if (base <= 36) {
-      const lastLetter = String.fromCharCode(97 + base - 11);
-      sequence = `0-9a-${lastLetter}`;
-    } else if (base <= 62) {
-      const lastLetter = String.fromCharCode(65 + base - 37);
-      sequence = `0-9a-zA-${lastLetter}`;
+    const characters = [];
+    if (base <= 62) {
+      for (let i = 0;i < Math.min(base, 10); i++) {
+        characters.push(String.fromCharCode(48 + i));
+      }
+      if (base > 10) {
+        for (let i = 0;i < Math.min(base - 10, 26); i++) {
+          characters.push(String.fromCharCode(97 + i));
+        }
+      }
+      if (base > 36) {
+        for (let i = 0;i < base - 36; i++) {
+          characters.push(String.fromCharCode(65 + i));
+        }
+      }
     } else {
       throw new Error("BaseSystem.fromBase() only supports bases up to 62. Use constructor with custom character sequence for larger bases.");
     }
-    return new BaseSystem(sequence, name || `Base ${base}`);
+    return new BaseSystem(characters, name || `Base ${base}`);
   }
   static createPattern(pattern, size, name) {
+    const characters = [];
     switch (pattern.toLowerCase()) {
       case "alphanumeric":
-        if (size <= 36) {
-          return BaseSystem.fromBase(size, name);
-        } else if (size <= 62) {
-          return BaseSystem.fromBase(size, name);
-        } else {
+        if (size > 62) {
           throw new Error(`Alphanumeric pattern only supports up to base 62, got ${size}`);
         }
+        return BaseSystem.fromBase(size, name);
       case "digits-only":
         if (size > 10) {
           throw new Error(`Digits-only pattern only supports up to base 10, got ${size}`);
         }
-        return new BaseSystem(`0-${size - 1}`, name || `Base ${size} (digits only)`);
+        for (let i = 0;i < size; i++)
+          characters.push(String.fromCharCode(48 + i));
+        return new BaseSystem(characters, name || `Base ${size} (digits only)`);
       case "letters-only":
-        if (size <= 26) {
-          const lastLetter2 = String.fromCharCode(97 + size - 1);
-          return new BaseSystem(`a-${lastLetter2}`, name || `Base ${size} (lowercase letters)`);
-        } else if (size <= 52) {
-          const lastLetter2 = String.fromCharCode(65 + size - 27);
-          return new BaseSystem(`a-zA-${lastLetter2}`, name || `Base ${size} (mixed case letters)`);
-        } else {
+        if (size > 52) {
           throw new Error(`Letters-only pattern only supports up to base 52, got ${size}`);
         }
+        for (let i = 0;i < Math.min(size, 26); i++) {
+          characters.push(String.fromCharCode(97 + i));
+        }
+        if (size > 26) {
+          for (let i = 0;i < size - 26; i++) {
+            characters.push(String.fromCharCode(65 + i));
+          }
+        }
+        return new BaseSystem(characters, name || (size <= 26 ? `Base ${size} (lowercase letters)` : `Base ${size} (mixed case letters)`));
       case "uppercase-only":
         if (size > 26) {
           throw new Error(`Uppercase-only pattern only supports up to base 26, got ${size}`);
         }
-        const lastLetter = String.fromCharCode(65 + size - 1);
-        return new BaseSystem(`A-${lastLetter}`, name || `Base ${size} (uppercase letters)`);
+        for (let i = 0;i < size; i++) {
+          characters.push(String.fromCharCode(65 + i));
+        }
+        return new BaseSystem(characters, name || `Base ${size} (uppercase letters)`);
       default:
         throw new Error(`Unknown pattern: ${pattern}. Supported patterns: alphanumeric, digits-only, letters-only, uppercase-only`);
     }
@@ -298,14 +285,14 @@ class BaseSystem {
     throw new Error("caseSensitive must be a boolean value");
   }
 }
-BaseSystem.BINARY = new BaseSystem("0-1", "Binary");
-BaseSystem.OCTAL = new BaseSystem("0-7", "Octal");
-BaseSystem.DECIMAL = new BaseSystem("0-9", "Decimal");
-BaseSystem.HEXADECIMAL = new BaseSystem("0-9a-f", "Hexadecimal");
-BaseSystem.BASE36 = new BaseSystem("0-9a-z", "Base 36");
-BaseSystem.BASE62 = new BaseSystem("0-9a-zA-Z", "Base 62");
-BaseSystem.BASE60 = new BaseSystem("0-9a-zA-X", "Base 60 (Sexagesimal)");
-BaseSystem.ROMAN = new BaseSystem("IVXLCDM", "Roman Numerals");
+BaseSystem.BINARY = new BaseSystem(["0", "1"], "Binary");
+BaseSystem.OCTAL = new BaseSystem(["0", "1", "2", "3", "4", "5", "6", "7"], "Octal");
+BaseSystem.DECIMAL = new BaseSystem(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"], "Decimal");
+BaseSystem.HEXADECIMAL = new BaseSystem(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"], "Hexadecimal");
+BaseSystem.BASE36 = new BaseSystem("0123456789abcdefghijklmnopqrstuvwxyz".split(""), "Base 36");
+BaseSystem.BASE62 = new BaseSystem("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".split(""), "Base 62");
+BaseSystem.BASE60 = new BaseSystem("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWX".split(""), "Base 60 (Sexagesimal)");
+BaseSystem.ROMAN = new BaseSystem(["I", "V", "X", "L", "C", "D", "M"], "Roman Numerals");
 
 // ../../packages/core/src/rational.js
 var bitLength = function(int) {
@@ -617,15 +604,17 @@ class Rational {
   toRepeatingBase(baseSystem) {
     return this.toRepeatingBaseWithPeriod(baseSystem).baseStr;
   }
-  toRepeatingBaseWithPeriod(baseSystem, useRepeatNotation = true) {
+  toRepeatingBaseWithPeriod(baseSystem, options = {}) {
     if (!(baseSystem instanceof BaseSystem)) {
       throw new Error("Argument must be a BaseSystem");
     }
+    const { useRepeatNotation = true, limit = 1000 } = options;
     if (this.#numerator < 0n) {
-      const result2 = this.negate().toRepeatingBaseWithPeriod(baseSystem, useRepeatNotation);
+      const result2 = this.negate().toRepeatingBaseWithPeriod(baseSystem, options);
       return {
         baseStr: "-" + result2.baseStr,
-        period: result2.period
+        period: result2.period,
+        limitHit: result2.limitHit
       };
     }
     const baseBigInt = BigInt(baseSystem.base);
@@ -635,16 +624,20 @@ class Rational {
     let remainder = num % den;
     let result = baseSystem.fromDecimal(integerPart);
     if (remainder === 0n) {
-      return { baseStr: result, period: 0 };
+      return { baseStr: result, period: 0, limitHit: false };
     }
     result += ".";
     const remainders = new Map;
     let fractionParts = [];
     let cycleStartIndex = -1;
-    const limit = 1e6;
-    while (remainder !== 0n && fractionParts.length < limit) {
+    let limitHit = false;
+    while (remainder !== 0n) {
       if (remainders.has(remainder)) {
         cycleStartIndex = remainders.get(remainder);
+        break;
+      }
+      if (fractionParts.length >= limit) {
+        limitHit = true;
         break;
       }
       remainders.set(remainder, fractionParts.length);
@@ -671,7 +664,34 @@ class Rational {
       result += formattedPartial + "...";
       period = -1;
     }
-    return { baseStr: result, period };
+    return { baseStr: result, period, limitHit };
+  }
+  periodModulo(baseSystem, limit = 1e6) {
+    if (!(baseSystem instanceof BaseSystem)) {
+      throw new Error("Argument must be a BaseSystem");
+    }
+    let num = this.#numerator < 0n ? -this.#numerator : this.#numerator;
+    let den = this.#denominator;
+    const baseBigInt = BigInt(baseSystem.base);
+    if (den === 1n)
+      return 0;
+    let common = this.#gcd(den, baseBigInt);
+    while (common > 1n) {
+      den /= common;
+      common = this.#gcd(den, baseBigInt);
+    }
+    if (den === 1n)
+      return 0;
+    let k = 1;
+    let power = baseBigInt % den;
+    while (power !== 1n && k <= limit) {
+      power = power * baseBigInt % den;
+      k++;
+    }
+    if (k > limit) {
+      throw new Error(`Period calculation exceeded limit of ${limit} iterations. Period is likely > ${limit}.`);
+    }
+    return k;
   }
   toBase(baseSystem) {
     if (!(baseSystem instanceof BaseSystem)) {
