@@ -375,7 +375,7 @@ class WebCalculator {
 
     // Handle BASE commands (but not BASES)
     if (upperInput.startsWith("BASE") && !upperInput.startsWith("BASES")) {
-      this.handleBaseCommand(upperInput);
+      this.handleBaseCommand(input);
       this.inputElement.value = "";
       return;
     }
@@ -514,7 +514,10 @@ class WebCalculator {
   }
 
   formatInteger(integer) {
-    return integer.value.toString();
+    const decimal = integer.value.toString();
+    const rat = new Rational(integer.value, 1n);
+    const baseRepresentation = this.formatRationalBaseRepresentations(rat);
+    return `${decimal}${baseRepresentation}`;
   }
 
   formatRational(rational) {
@@ -538,31 +541,7 @@ class WebCalculator {
           : "";
 
     // Show base representations if not all decimal
-    let baseRepresentation = "";
-    if (this.outputBases.some((base) => base.base !== 10)) {
-      const baseReprs = [];
-      for (const base of this.outputBases) {
-        if (base.base !== 10) {
-          try {
-            const { baseStr, period: basePeriod } =
-              rational.toRepeatingBaseWithPeriod(base);
-            const formattedBaseStr = this.formatRepeatingExpansion(baseStr);
-            const basePeriodInfo =
-              basePeriod === -1
-                ? " [period > 10^6]"
-                : basePeriod > 0
-                  ? ` {period: ${basePeriod}}`
-                  : "";
-            baseReprs.push(`${formattedBaseStr}[${base.base}]${basePeriodInfo}`);
-          } catch (error) {
-            // Ignore conversion errors for individual bases
-          }
-        }
-      }
-      if (baseReprs.length > 0) {
-        baseRepresentation = ` (${baseReprs.join(", ")})`;
-      }
-    }
+    const baseRepresentation = this.formatRationalBaseRepresentations(rational);
 
     switch (this.outputMode) {
       case "DECI":
@@ -588,6 +567,77 @@ class WebCalculator {
       default:
         return `${displayDecimal}${periodInfo} (${fraction})${baseRepresentation}`;
     }
+  }
+
+  formatRationalBaseRepresentations(rational) {
+    if (!this.outputBases.some((base) => base.base !== 10)) return "";
+
+    const baseReprs = [];
+    for (const base of this.outputBases) {
+      if (base.base !== 10) {
+        try {
+          const { baseStr, period: basePeriod } =
+            rational.toRepeatingBaseWithPeriod(base);
+          const formattedBaseStr = this.formatRepeatingExpansion(baseStr);
+          const basePeriodInfo =
+            basePeriod === -1
+              ? " [period > 10^6]"
+              : basePeriod > 0
+                ? ` {period: ${basePeriod}}`
+                : "";
+
+          const prefix = BaseSystem.getPrefixForSystem(base);
+          const formattedOutput = prefix
+            ? `0${prefix}${formattedBaseStr}`
+            : `${formattedBaseStr}[${base.base}]`;
+
+          baseReprs.push(`${formattedOutput}${basePeriodInfo}`);
+        } catch (error) {
+          // Ignore conversion errors for individual bases
+        }
+      }
+    }
+
+    if (baseReprs.length > 0) {
+      return ` (${baseReprs.join(", ")})`;
+    }
+    return "";
+  }
+
+  formatIntervalBaseRepresentations(interval) {
+    if (!this.outputBases.some((base) => base.base !== 10)) return "";
+
+    const baseReprs = [];
+    for (const base of this.outputBases) {
+      if (base.base !== 10) {
+        try {
+          const { baseStr: lowStr } =
+            interval.low.toRepeatingBaseWithPeriod(base);
+          const { baseStr: highStr } =
+            interval.high.toRepeatingBaseWithPeriod(base);
+
+          const lowFormatted = this.formatRepeatingExpansion(lowStr);
+          const highFormatted = this.formatRepeatingExpansion(highStr);
+
+          const prefix = BaseSystem.getPrefixForSystem(base);
+          const lowOutput = prefix
+            ? `0${prefix}${lowFormatted}`
+            : `${lowFormatted}[${base.base}]`;
+          const highOutput = prefix
+            ? `0${prefix}${highFormatted}`
+            : `${highFormatted}[${base.base}]`;
+
+          baseReprs.push(`${lowOutput}:${highOutput}`);
+        } catch (error) {
+          // Ignore conversion errors
+        }
+      }
+    }
+
+    if (baseReprs.length > 0) {
+      return ` (${baseReprs.join(", ")})`;
+    }
+    return "";
   }
 
   formatDecimal(rational) {
@@ -685,21 +735,23 @@ class WebCalculator {
       periodInfo = ` {period: ${periodParts.join(", ")}}`;
     }
 
+    const baseRepresentation = this.formatIntervalBaseRepresentations(interval);
+
     switch (this.outputMode) {
       case "DECI":
-        return `${lowDisplay}:${highDisplay}${periodInfo}`;
+        return `${lowDisplay}:${highDisplay}${periodInfo}${baseRepresentation}`;
       case "RAT":
-        return `${lowFraction}:${highFraction}`;
+        return `${lowFraction}:${highFraction}${baseRepresentation}`;
       case "BOTH":
         const decimalRange = `${lowDisplay}:${highDisplay}${periodInfo}`;
         const rationalRange = `${lowFraction}:${highFraction}`;
         if (decimalRange !== rationalRange) {
-          return `${decimalRange} (${rationalRange})`;
+          return `${decimalRange} (${rationalRange})${baseRepresentation}`;
         } else {
-          return decimalRange;
+          return `${decimalRange}${baseRepresentation}`;
         }
       default:
-        return `${lowFraction}:${highFraction}`;
+        return `${lowFraction}:${highFraction}${baseRepresentation}`;
     }
   }
 
@@ -1081,7 +1133,7 @@ class WebCalculator {
           calculator.appendChild(tempDiv);
         }
       }
-*/
+  */
       // Update the content
       tempDiv.innerHTML = `<span style="color: #059669; font-weight: bold; font-size: 0.95rem; margin-right: 6px;">></span> <span style="font-size: 0.9rem;">${this.escapeHtml(this.mobileInput || "")}</span>`;
 
@@ -1434,6 +1486,23 @@ class WebCalculator {
     if (baseSpec.includes("->")) {
       this.handleInputOutputBaseCommand(baseSpec);
       return;
+    }
+
+    // Check for single character prefix (e.g., "BASE t")
+    if (baseSpec.length === 1) {
+      const prefixSystem = BaseSystem.getSystemForPrefix(baseSpec);
+      if (prefixSystem) {
+        this.inputBase = prefixSystem;
+        this.outputBases = [prefixSystem]; // Align with calc: switching base sets both input and output
+        this.variableManager.setInputBase(prefixSystem);
+
+        const prefix = BaseSystem.getPrefixForSystem(prefixSystem);
+        const prefixInfo = prefix ? ` (prefix 0${prefix})` : "";
+        const output = `Base set to ${prefixSystem.name}${prefixInfo} (base ${prefixSystem.base})`;
+        this.addToOutput("", output, false);
+        this.finishEntry(output);
+        return;
+      }
     }
 
     // Legacy behavior: set both input and output to same base

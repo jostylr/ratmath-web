@@ -3568,18 +3568,18 @@ function parseBaseNotation(numberStr, baseSystem, options = {}) {
   }
   let eNotationIndex = -1;
   let eNotationType = null;
-  const baseContainsE = baseSystem.characters.includes("E") || baseSystem.characters.includes("e");
-  if (baseContainsE) {
-    eNotationIndex = numberStr.indexOf("_^");
-    if (eNotationIndex !== -1) {
-      eNotationType = "_^";
-    }
+  const explicitSciIndex = numberStr.indexOf("_^");
+  if (explicitSciIndex !== -1) {
+    eNotationIndex = explicitSciIndex;
+    eNotationType = "_^";
   } else {
-    const upperStr = numberStr.toUpperCase();
-    const eIndex = upperStr.indexOf("E");
-    if (eIndex !== -1) {
-      eNotationIndex = eIndex;
-      eNotationType = "E";
+    if (baseSystem.base === 10) {
+      const upperStr = numberStr.toUpperCase();
+      const eIndex = upperStr.indexOf("E");
+      if (eIndex !== -1) {
+        eNotationIndex = eIndex;
+        eNotationType = "E";
+      }
     }
   }
   let baseNumber = numberStr;
@@ -4717,6 +4717,9 @@ class Parser {
     } else if (expr[0] === "E") {
       spaceBeforeE = false;
       startIndex = 1;
+    } else if (expr.startsWith("_^")) {
+      spaceBeforeE = false;
+      startIndex = 2;
     } else {
       throw new Error("Expected E notation");
     }
@@ -4744,21 +4747,20 @@ class Parser {
     if (!baseSystem) {
       throw new Error("Base-aware E notation requires inputBase option");
     }
-    const baseContainsE = baseSystem.characters.includes("E") || baseSystem.characters.includes("e");
     let notationType;
     let startIndex;
-    if (baseContainsE) {
-      if (!expr.startsWith("_^")) {
-        throw new Error("Expected _^ notation for bases containing E");
-      }
+    if (expr.startsWith("_^")) {
       notationType = "_^";
       startIndex = 2;
-    } else {
-      if (!expr.startsWith("E") && !expr.startsWith("e")) {
-        throw new Error("Expected E notation");
-      }
+    } else if (baseSystem.base === 10 && (expr.startsWith("E") || expr.startsWith("e"))) {
       notationType = "E";
       startIndex = 1;
+    } else {
+      if (baseSystem.base === 10) {
+        throw new Error("Expected E or _^ notation");
+      } else {
+        throw new Error("Scientific notation in non-decimal bases requires _^ separator (e.g. 5_^2)");
+      }
     }
     let endIndex = startIndex;
     if (endIndex < expr.length && expr[endIndex] === "-") {

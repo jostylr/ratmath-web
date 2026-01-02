@@ -3456,18 +3456,18 @@ function parseBaseNotation(numberStr, baseSystem, options = {}) {
   }
   let eNotationIndex = -1;
   let eNotationType = null;
-  const baseContainsE = baseSystem.characters.includes("E") || baseSystem.characters.includes("e");
-  if (baseContainsE) {
-    eNotationIndex = numberStr.indexOf("_^");
-    if (eNotationIndex !== -1) {
-      eNotationType = "_^";
-    }
+  const explicitSciIndex = numberStr.indexOf("_^");
+  if (explicitSciIndex !== -1) {
+    eNotationIndex = explicitSciIndex;
+    eNotationType = "_^";
   } else {
-    const upperStr = numberStr.toUpperCase();
-    const eIndex = upperStr.indexOf("E");
-    if (eIndex !== -1) {
-      eNotationIndex = eIndex;
-      eNotationType = "E";
+    if (baseSystem.base === 10) {
+      const upperStr = numberStr.toUpperCase();
+      const eIndex = upperStr.indexOf("E");
+      if (eIndex !== -1) {
+        eNotationIndex = eIndex;
+        eNotationType = "E";
+      }
     }
   }
   let baseNumber = numberStr;
@@ -4605,6 +4605,9 @@ class Parser {
     } else if (expr[0] === "E") {
       spaceBeforeE = false;
       startIndex = 1;
+    } else if (expr.startsWith("_^")) {
+      spaceBeforeE = false;
+      startIndex = 2;
     } else {
       throw new Error("Expected E notation");
     }
@@ -4632,21 +4635,20 @@ class Parser {
     if (!baseSystem) {
       throw new Error("Base-aware E notation requires inputBase option");
     }
-    const baseContainsE = baseSystem.characters.includes("E") || baseSystem.characters.includes("e");
     let notationType;
     let startIndex;
-    if (baseContainsE) {
-      if (!expr.startsWith("_^")) {
-        throw new Error("Expected _^ notation for bases containing E");
-      }
+    if (expr.startsWith("_^")) {
       notationType = "_^";
       startIndex = 2;
-    } else {
-      if (!expr.startsWith("E") && !expr.startsWith("e")) {
-        throw new Error("Expected E notation");
-      }
+    } else if (baseSystem.base === 10 && (expr.startsWith("E") || expr.startsWith("e"))) {
       notationType = "E";
       startIndex = 1;
+    } else {
+      if (baseSystem.base === 10) {
+        throw new Error("Expected E or _^ notation");
+      } else {
+        throw new Error("Scientific notation in non-decimal bases requires _^ separator (e.g. 5_^2)");
+      }
     }
     let endIndex = startIndex;
     if (endIndex < expr.length && expr[endIndex] === "-") {
@@ -5333,47 +5335,68 @@ class VariableManager {
       const uppercaseChars = this.inputBase.characters.filter((c) => /[a-z]/.test(c)).map((c) => c.toUpperCase()).map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("");
       validChars += uppercaseChars;
     }
-    const numberPattern = new RegExp(`\\b(-?[${validChars}]+(?:\\.[${validChars}]+)?(?:\\.\\.[${validChars}]+(?:\\/[${validChars}]+)?)?(?:\\/[${validChars}]+)?)\\b(?!\\s*\\[)`, "g");
+    const numberPattern = new RegExp(`\\b(-?[${validChars}]+(?:\\.[${validChars}]+)?(?:\\.\\.[${validChars}]+(?:\\/[${validChars}]+)?)?(?:\\/[${validChars}]+)?(?:\\_\\^-?[${validChars}]+)?)\\b(?!\\s*\\[)`, "g");
     return expression.replace(numberPattern, (match) => {
       try {
-        const normalize = (s) => this.inputBase.base > 10 ? s.toLowerCase() : s;
+        const normalize = (s) => this.inputBase.base <= 36 && this.inputBase.base > 10 ? s.toLowerCase() : s;
         if (/^-?0[a-zA-Z]/.test(match)) {
           return match;
         }
-        if (match.includes("..")) {
-          const [whole, fraction] = match.split("..");
-          const wholeDec = this.inputBase.toDecimal(normalize(whole));
-          if (fraction.includes("/")) {
-            const [num, den] = fraction.split("/");
+        const parseToRational = (str) => {
+          if (str.includes("..")) {
+            const [whole, fraction] = str.split("..");
+            const wholeDec = this.inputBase.toDecimal(normalize(whole));
+            if (fraction.includes("/")) {
+              const [num, den] = fraction.split("/");
+              const numDec = this.inputBase.toDecimal(normalize(num));
+              const denDec = this.inputBase.toDecimal(normalize(den));
+              const w = new Rational(wholeDec);
+              const n = new Rational(numDec);
+              const d = new Rational(denDec);
+              return w.add(n.divide(d));
+            } else {
+              const fracDec = this.inputBase.toDecimal(normalize(fraction));
+              return `${wholeDec}..${fracDec}`;
+            }
+          }
+          if (str.includes("/") && !str.includes(".")) {
+            const [num, den] = str.split("/");
             const numDec = this.inputBase.toDecimal(normalize(num));
             const denDec = this.inputBase.toDecimal(normalize(den));
-            return `${wholeDec}..${numDec}/${denDec}`;
-          } else {
-            const fracDec = this.inputBase.toDecimal(normalize(fraction));
-            return `${wholeDec}..${fracDec}`;
+            return `${numDec}/${denDec}`;
           }
-        }
-        if (match.includes("/") && !match.includes(".")) {
-          const [num, den] = match.split("/");
-          const numDec = this.inputBase.toDecimal(normalize(num));
-          const denDec = this.inputBase.toDecimal(normalize(den));
-          return `${numDec}/${denDec}`;
-        }
-        if (match.includes(".")) {
-          const [intStr, fracStr] = match.split(".");
-          const isNegative2 = intStr.startsWith("-");
-          let val = new Rational(this.inputBase.toDecimal(normalize(intStr)));
-          const base = BigInt(this.inputBase.base);
-          let divisor = base;
-          for (const char of fracStr) {
-            const digitValue = this.inputBase.toDecimal(normalize(char));
-            const term = new Rational(digitValue, divisor);
-            val = isNegative2 ? val.subtract(term) : val.add(term);
-            divisor *= base;
+          if (str.includes(".")) {
+            const [intStr, fracStr] = str.split(".");
+            const isNegative2 = intStr.startsWith("-");
+            let val2 = new Rational(this.inputBase.toDecimal(normalize(intStr)));
+            const base = BigInt(this.inputBase.base);
+            let divisor = base;
+            for (const char of fracStr) {
+              const digitValue = this.inputBase.toDecimal(normalize(char));
+              const term = new Rational(digitValue, divisor);
+              val2 = isNegative2 ? val2.subtract(term) : val2.add(term);
+              divisor *= base;
+            }
+            return val2.toString();
           }
-          return val.toString();
+          let targetStr = str;
+          let isNeg = false;
+          if (targetStr.startsWith("-")) {
+            isNeg = true;
+            targetStr = targetStr.substring(1);
+          }
+          const val = this.inputBase.toDecimal(normalize(targetStr));
+          return isNeg ? (-val).toString() : val.toString();
+        };
+        const toPrefixed0d = (s) => s.startsWith("-") ? `-0d${s.substring(1)}` : `0d${s}`;
+        if (match.includes("_^")) {
+          const [basePart, expPart] = match.split("_^");
+          const baseValStr = parseToRational(basePart);
+          const expValStr = parseToRational(expPart);
+          return `(${toPrefixed0d(baseValStr)}) * (${toPrefixed0d(this.inputBase.base.toString())}) ^ (${toPrefixed0d(expValStr)})`;
         }
-        return this.inputBase.toDecimal(normalize(match)).toString();
+        const valStr = parseToRational(match);
+        return toPrefixed0d(valStr);
       } catch (error) {
         return match;
       }
@@ -5605,7 +5628,8 @@ class VariableManager {
       const preprocessed = this.preprocessExpression(substituted);
       const result = Parser.parse(preprocessed, {
         typeAware: true,
-        customBases: this.customBases
+        customBases: this.customBases,
+        inputBase: this.inputBase
       });
       return {
         type: "expression",
@@ -6983,7 +7007,7 @@ class WebCalculator {
       return;
     }
     if (upperInput.startsWith("BASE") && !upperInput.startsWith("BASES")) {
-      this.handleBaseCommand(upperInput);
+      this.handleBaseCommand(input);
       this.inputElement.value = "";
       return;
     }
@@ -7095,7 +7119,10 @@ class WebCalculator {
     }
   }
   formatInteger(integer) {
-    return integer.value.toString();
+    const decimal = integer.value.toString();
+    const rat = new Rational(integer.value, 1n);
+    const baseRepresentation = this.formatRationalBaseRepresentations(rat);
+    return `${decimal}${baseRepresentation}`;
   }
   formatRational(rational) {
     const repeatingInfo = rational.toRepeatingDecimalWithPeriod();
@@ -7105,23 +7132,7 @@ class WebCalculator {
     const fraction = this.mixedDisplay ? rational.toMixedString() : rational.toString();
     const displayDecimal = this.formatRepeatingExpansion(repeatingDecimal);
     const periodInfo = period === -1 ? " [period > 10^7]" : period > 0 ? ` {period: ${period}}` : "";
-    let baseRepresentation = "";
-    if (this.outputBases.some((base) => base.base !== 10)) {
-      const baseReprs = [];
-      for (const base of this.outputBases) {
-        if (base.base !== 10) {
-          try {
-            const { baseStr, period: basePeriod } = rational.toRepeatingBaseWithPeriod(base);
-            const formattedBaseStr = this.formatRepeatingExpansion(baseStr);
-            const basePeriodInfo = basePeriod === -1 ? " [period > 10^6]" : basePeriod > 0 ? ` {period: ${basePeriod}}` : "";
-            baseReprs.push(`${formattedBaseStr}[${base.base}]${basePeriodInfo}`);
-          } catch (error) {}
-        }
-      }
-      if (baseReprs.length > 0) {
-        baseRepresentation = ` (${baseReprs.join(", ")})`;
-      }
-    }
+    const baseRepresentation = this.formatRationalBaseRepresentations(rational);
     switch (this.outputMode) {
       case "DECI":
         return `${displayDecimal}${periodInfo}${baseRepresentation}`;
@@ -7142,6 +7153,50 @@ class WebCalculator {
       default:
         return `${displayDecimal}${periodInfo} (${fraction})${baseRepresentation}`;
     }
+  }
+  formatRationalBaseRepresentations(rational) {
+    if (!this.outputBases.some((base) => base.base !== 10))
+      return "";
+    const baseReprs = [];
+    for (const base of this.outputBases) {
+      if (base.base !== 10) {
+        try {
+          const { baseStr, period: basePeriod } = rational.toRepeatingBaseWithPeriod(base);
+          const formattedBaseStr = this.formatRepeatingExpansion(baseStr);
+          const basePeriodInfo = basePeriod === -1 ? " [period > 10^6]" : basePeriod > 0 ? ` {period: ${basePeriod}}` : "";
+          const prefix = BaseSystem.getPrefixForSystem(base);
+          const formattedOutput = prefix ? `0${prefix}${formattedBaseStr}` : `${formattedBaseStr}[${base.base}]`;
+          baseReprs.push(`${formattedOutput}${basePeriodInfo}`);
+        } catch (error) {}
+      }
+    }
+    if (baseReprs.length > 0) {
+      return ` (${baseReprs.join(", ")})`;
+    }
+    return "";
+  }
+  formatIntervalBaseRepresentations(interval) {
+    if (!this.outputBases.some((base) => base.base !== 10))
+      return "";
+    const baseReprs = [];
+    for (const base of this.outputBases) {
+      if (base.base !== 10) {
+        try {
+          const { baseStr: lowStr } = interval.low.toRepeatingBaseWithPeriod(base);
+          const { baseStr: highStr } = interval.high.toRepeatingBaseWithPeriod(base);
+          const lowFormatted = this.formatRepeatingExpansion(lowStr);
+          const highFormatted = this.formatRepeatingExpansion(highStr);
+          const prefix = BaseSystem.getPrefixForSystem(base);
+          const lowOutput = prefix ? `0${prefix}${lowFormatted}` : `${lowFormatted}[${base.base}]`;
+          const highOutput = prefix ? `0${prefix}${highFormatted}` : `${highFormatted}[${base.base}]`;
+          baseReprs.push(`${lowOutput}:${highOutput}`);
+        } catch (error) {}
+      }
+    }
+    if (baseReprs.length > 0) {
+      return ` (${baseReprs.join(", ")})`;
+    }
+    return "";
   }
   formatDecimal(rational) {
     const decimal = rational.toDecimal();
@@ -7209,21 +7264,22 @@ class WebCalculator {
         periodParts.push(`high: ${highPeriod}`);
       periodInfo = ` {period: ${periodParts.join(", ")}}`;
     }
+    const baseRepresentation = this.formatIntervalBaseRepresentations(interval);
     switch (this.outputMode) {
       case "DECI":
-        return `${lowDisplay}:${highDisplay}${periodInfo}`;
+        return `${lowDisplay}:${highDisplay}${periodInfo}${baseRepresentation}`;
       case "RAT":
-        return `${lowFraction}:${highFraction}`;
+        return `${lowFraction}:${highFraction}${baseRepresentation}`;
       case "BOTH":
         const decimalRange = `${lowDisplay}:${highDisplay}${periodInfo}`;
         const rationalRange = `${lowFraction}:${highFraction}`;
         if (decimalRange !== rationalRange) {
-          return `${decimalRange} (${rationalRange})`;
+          return `${decimalRange} (${rationalRange})${baseRepresentation}`;
         } else {
-          return decimalRange;
+          return `${decimalRange}${baseRepresentation}`;
         }
       default:
-        return `${lowFraction}:${highFraction}`;
+        return `${lowFraction}:${highFraction}${baseRepresentation}`;
     }
   }
   addToOutput(input = null, output = null, isError = false, result = null, expression = null) {
@@ -7782,6 +7838,20 @@ class WebCalculator {
     if (baseSpec.includes("->")) {
       this.handleInputOutputBaseCommand(baseSpec);
       return;
+    }
+    if (baseSpec.length === 1) {
+      const prefixSystem = BaseSystem.getSystemForPrefix(baseSpec);
+      if (prefixSystem) {
+        this.inputBase = prefixSystem;
+        this.outputBases = [prefixSystem];
+        this.variableManager.setInputBase(prefixSystem);
+        const prefix = BaseSystem.getPrefixForSystem(prefixSystem);
+        const prefixInfo = prefix ? ` (prefix 0${prefix})` : "";
+        const output = `Base set to ${prefixSystem.name}${prefixInfo} (base ${prefixSystem.base})`;
+        this.addToOutput("", output, false);
+        this.finishEntry(output);
+        return;
+      }
     }
     this.handleLegacyBaseCommand(baseSpec);
   }

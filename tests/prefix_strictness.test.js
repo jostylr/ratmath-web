@@ -77,7 +77,9 @@ describe("WebCalculator Prefix Strictness", () => {
         calc.processExpression("0b10");
 
         // Output should be '2' (in Base 36, 2 is '2')
-        expect(calc.getLastLog()).toBe("2");
+        // Output format: "2 (2[36])"
+        expect(calc.getLastLog()).toContain("2");
+        expect(calc.getLastLog()).toContain("(2[36])");
     });
 
     test("BASES command linking", () => {
@@ -93,6 +95,43 @@ describe("WebCalculator Prefix Strictness", () => {
         calc.clearLogs();
         calc.processExpression("0z10"); // Base 62 '10' = 62
         expect(calc.getLastLog()).toBe("62");
+    });
+
+    test("BASE command with prefix", () => {
+        // Register t:32 via processExpression to ensure full integration
+        calc.processExpression("BASES t:32");
+        calc.clearLogs();
+
+        // Command "BASE t" should switch to Base 32
+        // Using processExpression to verify case preservation
+        calc.processExpression("BASE t");
+
+        expect(calc.inputBase.base).toBe(32);
+        const lastLog = calc.getLastLog();
+        expect(lastLog).toContain("Base set to Base 32");
+
+        // Check output format
+        // Base 32 '10' is 32. In Base 32 it is displayed as '10' (prefix 0t? or just 10)
+        // With current webcalc logic:
+        // formatInteger -> uses 'decimal' (Base 10) representation by default?
+        // If outputMode is DECI/BOTH/RAT
+
+        // Let's check a simple number
+        calc.clearLogs();
+        // Input '10' in Base 32 is decimal 32.
+        calc.processExpression("10");
+
+        const output = calc.getLastLog();
+        // Expect standard decimal output
+        expect(output).toContain("32");
+
+        // Expect base representation
+        const prefix = BaseSystem.getPrefixForSystem(calc.inputBase);
+        if (prefix) {
+            expect(output).toContain(`0${prefix}10`);
+        } else {
+            expect(output).toContain("[32]");
+        }
     });
 
     test("Case sensitive prefixes", () => {
