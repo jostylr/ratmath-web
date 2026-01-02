@@ -374,7 +374,7 @@ class WebCalculator {
     }
 
     // Handle BASE commands (but not BASES)
-    if (upperInput.startsWith("BASE") && upperInput !== "BASES") {
+    if (upperInput.startsWith("BASE") && !upperInput.startsWith("BASES")) {
       this.handleBaseCommand(upperInput);
       this.inputElement.value = "";
       return;
@@ -425,8 +425,13 @@ class WebCalculator {
       return;
     }
 
-    if (upperInput === "BASES") {
-      this.showBases();
+    if (upperInput.startsWith("BASES")) {
+      const args = input.trim().substring(5).trim();
+      if (args) {
+        this.handleBasesCommand(args);
+      } else {
+        this.showBases();
+      }
       this.inputElement.value = "";
       return;
     }
@@ -1510,32 +1515,100 @@ class WebCalculator {
     }
   }
 
+  handleBasesCommand(args) {
+    const parts = args.split(",").map((p) => p.trim());
+    let output = "";
+    const errors = [];
+
+    for (const part of parts) {
+      if (part.includes(":")) {
+        const [prefix, def] = part.split(":").map((s) => s.trim());
+        if (prefix.length !== 1) {
+          errors.push(`Prefix '${prefix}' must be a single character`);
+          continue;
+        }
+        try {
+          const base = this.parseBaseSpec(def);
+          BaseSystem.registerPrefix(prefix, base);
+          output += `Linked prefix '0${prefix}' to ${base.name}\n`;
+        } catch (e) {
+          errors.push(`Error linking '${prefix}': ${e.message}`);
+        }
+      } else {
+        errors.push(`Invalid format '${part}'. Use prefix:base (e.g. t:32)`);
+      }
+    }
+
+    if (errors.length > 0) {
+      output += "\nErrors:\n" + errors.join("\n");
+    }
+
+    if (output) {
+      this.addToOutput("", output.trim(), errors.length > 0);
+      this.finishEntry(output.trim());
+    }
+  }
+
   parseBaseSpec(baseSpec) {
-    // Check if it's a pure numeric base (no letters or dashes)
-    const numericBase = parseInt(baseSpec);
-    if (!isNaN(numericBase) && /^\d+$/.test(baseSpec.trim())) {
+    const trimmed = baseSpec.trim();
+
+    // Support inline prefix registration (e.g. t:32)
+    if (
+      trimmed.includes(":") &&
+      !trimmed.startsWith("[") &&
+      !trimmed.endsWith("]")
+    ) {
+      const splitIndex = trimmed.indexOf(":");
+      const prefix = trimmed.substring(0, splitIndex).trim();
+      const def = trimmed.substring(splitIndex + 1).trim();
+
+      if (prefix.length === 1) {
+        try {
+          const base = this.parseBaseSpec(def);
+          BaseSystem.registerPrefix(prefix, base);
+          return base;
+        } catch (e) {
+          // Fall through if it's not a valid registration
+        }
+      }
+    }
+
+    // 1. Check for registered prefixes (case-insensitive)
+    const prefixSystem = BaseSystem.getSystemForPrefix(trimmed);
+    if (prefixSystem) return prefixSystem;
+
+    // 2. Check for common base names
+    const upper = trimmed.toUpperCase();
+    if (upper === "BIN" || upper === "BINARY") return BaseSystem.BINARY;
+    if (upper === "OCT" || upper === "OCTAL") return BaseSystem.OCTAL;
+    if (upper === "HEX" || upper === "HEXADECIMAL")
+      return BaseSystem.HEXADECIMAL;
+    if (upper === "DEC" || upper === "DECIMAL") return BaseSystem.DECIMAL;
+
+    // 3. Check if it's a pure numeric base
+    const numericBase = parseInt(trimmed);
+    const isNumericBaseId =
+      !isNaN(numericBase) &&
+      /^\d+$/.test(trimmed) &&
+      numericBase >= 2 &&
+      numericBase <= 62 &&
+      !trimmed.startsWith("0");
+
+    if (isNumericBaseId) {
       if (this.customBases.has(numericBase)) {
         return this.customBases.get(numericBase);
-      }
-
-      if (numericBase < 2) {
-        throw new Error("Base must be at least 2");
-      }
-      if (numericBase > 62) {
-        throw new Error(
-          "Numeric bases must be 62 or less. Use character sequence for larger bases.",
-        );
       }
       return BaseSystem.fromBase(numericBase);
     }
 
-    // Check if it's a character sequence (contains dashes or letters)
-    if (baseSpec.includes("-") || /[a-zA-Z]/.test(baseSpec)) {
-      return new BaseSystem(baseSpec, `Custom Base ${baseSpec}`);
+    // If strictly numeric but failed above (e.g. 1, 01, 70), or non-numeric:
+    // Try as character sequence.
+    if (trimmed.length >= 2) {
+      return new BaseSystem(trimmed, `Custom Base ${trimmed}`);
     }
 
     throw new Error(
-      "Invalid base specification. Use a number (2-62) or character sequence with dashes (e.g., '0-9a-f')",
+      "Invalid base specification. Use a prefix (x, b, o, d, t), a name (HEX, BIN), a number (2-62), or character sequence (min length 2)",
     );
   }
 
@@ -1550,11 +1623,13 @@ class WebCalculator {
     output += "Base commands:\n";
     output += "  BASE                - Show current base\n";
     output += "  BASE <n>            - Set base to n (2-62)\n";
+    output += "  BASE <a>:<n>        - Set base to n (2-62) and link to prefix a (a-Z)\n";
     output += "  BASE <sequence>     - Set custom base using character sequence\n";
     output += "  BASE <in>-><out>    - Set input base <in> and output base <out>\n";
     output += "  BASE <in>->[<out1>,<out2>,...] - Set input base and multiple output bases\n";
     output += "  BIN, HEX, OCT, DEC  - Quick base shortcuts\n";
-    output += "  BASES               - Show this help";
+    output += "  BASES               - Show this help\n";
+    output += "  BASES a:n, b:m...   - Link multiple prefixes to bases (e.g., BASES t:32, z:62)";
 
     this.addToOutput("", output, false);
     this.finishEntry(output);
