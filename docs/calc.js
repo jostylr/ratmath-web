@@ -4,6 +4,7 @@ class BaseSystem {
   #characters;
   #charMap;
   #name;
+  static #prefixMap = new Map;
   static RESERVED_SYMBOLS = new Set([
     "+",
     "-",
@@ -270,6 +271,35 @@ class BaseSystem {
         throw new Error(`Unknown pattern: ${pattern}. Supported patterns: alphanumeric, digits-only, letters-only, uppercase-only`);
     }
   }
+  static registerPrefix(prefix, baseSystem) {
+    if (typeof prefix !== "string" || prefix.length !== 1) {
+      throw new Error("Prefix must be a single character");
+    }
+    if (!(baseSystem instanceof BaseSystem)) {
+      throw new Error("Must provide a valid BaseSystem");
+    }
+    if (!/^[a-zA-Z]$/.test(prefix)) {
+      throw new Error("Prefix must be a letter");
+    }
+    BaseSystem.#prefixMap.set(prefix, baseSystem);
+  }
+  static unregisterPrefix(prefix) {
+    BaseSystem.#prefixMap.delete(prefix);
+  }
+  static getSystemForPrefix(prefix) {
+    if (BaseSystem.#prefixMap.has(prefix)) {
+      return BaseSystem.#prefixMap.get(prefix);
+    }
+    return;
+  }
+  static getPrefixForSystem(baseSystem) {
+    for (const [prefix, system] of BaseSystem.#prefixMap.entries()) {
+      if (system.equals(baseSystem)) {
+        return prefix;
+      }
+    }
+    return;
+  }
   withCaseSensitivity(caseSensitive) {
     if (caseSensitive === true) {
       return this;
@@ -293,6 +323,10 @@ BaseSystem.BASE36 = new BaseSystem("0123456789abcdefghijklmnopqrstuvwxyz".split(
 BaseSystem.BASE62 = new BaseSystem("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".split(""), "Base 62");
 BaseSystem.BASE60 = new BaseSystem("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWX".split(""), "Base 60 (Sexagesimal)");
 BaseSystem.ROMAN = new BaseSystem(["I", "V", "X", "L", "C", "D", "M"], "Roman Numerals");
+BaseSystem.registerPrefix("x", BaseSystem.HEXADECIMAL);
+BaseSystem.registerPrefix("b", BaseSystem.BINARY);
+BaseSystem.registerPrefix("o", BaseSystem.OCTAL);
+BaseSystem.registerPrefix("d", BaseSystem.DECIMAL);
 
 // ../../packages/core/src/rational.js
 var bitLength = function(int) {
@@ -3399,10 +3433,26 @@ function parseRepeatingDecimalInterval(str) {
   return new RationalInterval(leftEndpoint, rightEndpoint);
 }
 function parseBaseNotation(numberStr, baseSystem, options = {}) {
+  if (/\[[0-9a-zA-Z]+\]$/.test(numberStr)) {
+    throw new Error("Bracket base notation (Value[Base]) is no longer supported. Use prefix notation (0xValue, 0bValue) or the BASE command.");
+  }
   let isNegative2 = false;
   if (numberStr.startsWith("-")) {
     isNegative2 = true;
     numberStr = numberStr.substring(1);
+  }
+  const prefixMatch = numberStr.match(/^0([a-zA-Z])/);
+  if (prefixMatch) {
+    const prefix = prefixMatch[1];
+    const registeredBase = BaseSystem.getSystemForPrefix(prefix);
+    if (registeredBase) {
+      baseSystem = registeredBase;
+      numberStr = numberStr.substring(2);
+    } else {
+      if (prefix.toLowerCase() !== "e") {
+        throw new Error(`Invalid or unregistered prefix '0${prefix}'`);
+      }
+    }
   }
   let eNotationIndex = -1;
   let eNotationType = null;
@@ -3545,12 +3595,14 @@ function parseBaseNotation(numberStr, baseSystem, options = {}) {
     }
     const numeratorStr = parts[0].trim();
     const denominatorStr = parts[1].trim();
-    const numeratorDecimal = baseSystem.toDecimal(numeratorStr);
-    const denominatorDecimal = baseSystem.toDecimal(denominatorStr);
-    if (denominatorDecimal === 0n) {
+    const numeratorResult = parseBaseNotation(numeratorStr, baseSystem, options);
+    const denominatorResult = parseBaseNotation(denominatorStr, baseSystem, options);
+    const numRat = numeratorResult instanceof Integer ? numeratorResult.toRational() : numeratorResult;
+    const denRat = denominatorResult instanceof Integer ? denominatorResult.toRational() : denominatorResult;
+    if (denRat.numerator === 0n) {
       throw new Error("Denominator cannot be zero");
     }
-    let result = new Rational(numeratorDecimal, denominatorDecimal);
+    let result = numRat.divide(denRat);
     if (isNegative2) {
       result = result.negate();
     }
@@ -4225,26 +4277,7 @@ class Parser {
     if (expr.includes("[") && expr.includes("]")) {
       const baseMatch = expr.match(/^([-\w./:^]+(?::[-\w./:^]+)?)\[(\d+)\]/);
       if (baseMatch) {
-        const [fullMatch, numberStr, baseStr] = baseMatch;
-        const baseNum = parseInt(baseStr, 10);
-        if (baseNum < 2 || baseNum > 62) {
-          throw new Error(`Base ${baseNum} is not supported. Base must be between 2 and 62.`);
-        }
-        try {
-          let baseSystem;
-          if (options.customBases && options.customBases.has(baseNum)) {
-            baseSystem = options.customBases.get(baseNum);
-          } else {
-            baseSystem = BaseSystem.fromBase(baseNum);
-          }
-          const result = parseBaseNotation(numberStr, baseSystem, options);
-          return {
-            value: result,
-            remainingExpr: expr.substring(fullMatch.length)
-          };
-        } catch (error) {
-          throw new Error(`Invalid base notation ${fullMatch}: ${error.message}`);
-        }
+        throw new Error("Bracket base notation (Value[Base]) is no longer supported. Use prefix notation (0xValue, 0bValue) or the BASE command.");
       }
       const uncertaintyMatch = expr.match(/^(-?\d*\.?\d*)\[([^\]]+)\]/);
       if (uncertaintyMatch) {
@@ -4808,7 +4841,8 @@ class Parser {
         }
       }
     }
-    if (options.inputBase && options.inputBase !== BaseSystem.DECIMAL && !expr.includes("[") && !expr.includes("#")) {
+    const debugMatch = expr.trim().match(/^(-?)0[a-zA-Z]/);
+    if (options.inputBase && options.inputBase !== BaseSystem.DECIMAL && !expr.includes("[") && !expr.includes("#") && !debugMatch) {
       try {
         let endIndex = 0;
         let hasDecimalPoint = false;
@@ -4939,6 +4973,23 @@ class Parser {
     };
   }
   static #parseRational(expr, options = {}) {
+    expr = expr.trim();
+    const prefixMatch = expr.match(/^(-?)0([a-zA-Z])/);
+    let isExplicitPrefix = false;
+    if (prefixMatch) {
+      const isNegative3 = prefixMatch[1] === "-";
+      const prefix = prefixMatch[2];
+      const registeredBase = BaseSystem.getSystemForPrefix(prefix);
+      if (registeredBase) {
+        options = { ...options, inputBase: registeredBase };
+        isExplicitPrefix = true;
+        expr = (isNegative3 ? "-" : "") + expr.substring(prefixMatch[0].length);
+      } else {
+        if (prefix.toLowerCase() !== "e") {
+          throw new Error(`Invalid or unregistered prefix '0${prefix}'`);
+        }
+      }
+    }
     if (expr.length === 0) {
       throw new Error("Unexpected end of expression");
     }
@@ -4947,19 +4998,21 @@ class Parser {
       let hasDecimalPoint = false;
       let hasMixedNumber = false;
       let hasFraction = false;
+      let hasExponent = false;
+      let validationBase = options.inputBase;
       if (expr[endIndex] === "-") {
         endIndex++;
       }
       while (endIndex < expr.length) {
         const char = expr[endIndex];
-        let isValidChar = options.inputBase.charMap.has(char);
+        let isValidChar = validationBase.charMap.has(char);
         if (!isValidChar) {
-          const baseUsesLowercase = options.inputBase.characters.some((ch) => ch >= "a" && ch <= "z");
-          const baseUsesUppercase = options.inputBase.characters.some((ch) => ch >= "A" && ch <= "Z");
+          const baseUsesLowercase = validationBase.characters.some((ch) => ch >= "a" && ch <= "z");
+          const baseUsesUppercase = validationBase.characters.some((ch) => ch >= "A" && ch <= "Z");
           if (baseUsesLowercase && !baseUsesUppercase && char >= "A" && char <= "Z") {
-            isValidChar = options.inputBase.charMap.has(char.toLowerCase());
+            isValidChar = validationBase.charMap.has(char.toLowerCase());
           } else if (baseUsesUppercase && !baseUsesLowercase && char >= "a" && char <= "z") {
-            isValidChar = options.inputBase.charMap.has(char.toUpperCase());
+            isValidChar = validationBase.charMap.has(char.toUpperCase());
           }
         }
         if (isValidChar) {
@@ -4973,39 +5026,66 @@ class Parser {
           hasDecimalPoint = true;
           endIndex++;
         } else if (char === "/" && !hasFraction) {
+          if (endIndex + 1 < expr.length) {
+            const nextChar = expr[endIndex + 1];
+            if (!validationBase.charMap.has(nextChar)) {
+              break;
+            }
+          }
           hasFraction = true;
           endIndex++;
-        } else if ((char === "E" || char === "e") && !options.inputBase.characters.includes("E") && !options.inputBase.characters.includes("e")) {
-          break;
-        } else if (char === "_" && endIndex + 1 < expr.length && expr[endIndex + 1] === "^") {
-          break;
+          if (endIndex + 1 < expr.length) {
+            const potentialPrefix = expr.substring(endIndex, endIndex + 2);
+            const subPrefixMatch = potentialPrefix.match(/^0([a-zA-Z])/);
+            if (subPrefixMatch) {
+              const subBase = BaseSystem.getSystemForPrefix(subPrefixMatch[1]);
+              if (subBase) {
+                validationBase = subBase;
+                endIndex += 2;
+              }
+            }
+          }
+        } else if (validationBase.characters.includes(char.toUpperCase()) && (char === "E" || char === "e")) {
+          endIndex++;
+        } else if (char === "E" && !options.disableENotation || char === "_" && endIndex + 1 < expr.length && expr[endIndex + 1] === "^") {
+          hasExponent = true;
+          endIndex += char === "_" ? 2 : 1;
+          if (endIndex < expr.length && (expr[endIndex] === "+" || expr[endIndex] === "-")) {
+            endIndex++;
+          }
         } else {
           break;
         }
+      }
+      if (isExplicitPrefix && endIndex <= (expr[0] === "-" ? 1 : 0)) {
+        throw new Error(`Invalid number format for ${options.inputBase.name}`);
       }
       if (endIndex > (expr[0] === "-" ? 1 : 0)) {
         const numberStr = expr.substring(0, endIndex);
         const testStr = numberStr.startsWith("-") ? numberStr.substring(1) : numberStr;
         const parts = testStr.split(/[\.\/]/);
-        const isValidInBase = parts.every((part, index) => {
-          if (part === "") {
-            return testStr.includes(".") && (index === 0 || index === parts.length - 1 || testStr.includes(".."));
-          }
-          const baseUsesLowercase = options.inputBase.characters.some((char) => char >= "a" && char <= "z");
-          const baseUsesUppercase = options.inputBase.characters.some((char) => char >= "A" && char <= "Z");
-          return part.split("").every((char) => {
-            if (options.inputBase.charMap.has(char)) {
-              return true;
+        let isValidInBase = true;
+        if (!isExplicitPrefix) {
+          isValidInBase = parts.every((part, index) => {
+            if (part === "") {
+              return testStr.includes(".") && (index === 0 || index === parts.length - 1 || testStr.includes(".."));
             }
-            if (baseUsesLowercase && !baseUsesUppercase && char >= "A" && char <= "Z") {
-              return options.inputBase.charMap.has(char.toLowerCase());
-            }
-            if (baseUsesUppercase && !baseUsesLowercase && char >= "a" && char <= "z") {
-              return options.inputBase.charMap.has(char.toUpperCase());
-            }
-            return false;
+            const baseUsesLowercase = options.inputBase.characters.some((char) => char >= "a" && char <= "z");
+            const baseUsesUppercase = options.inputBase.characters.some((char) => char >= "A" && char <= "Z");
+            return part.split("").every((char) => {
+              if (options.inputBase.charMap.has(char)) {
+                return true;
+              }
+              if (baseUsesLowercase && !baseUsesUppercase && char >= "A" && char <= "Z") {
+                return options.inputBase.charMap.has(char.toLowerCase());
+              }
+              if (baseUsesUppercase && !baseUsesLowercase && char >= "a" && char <= "z") {
+                return options.inputBase.charMap.has(char.toUpperCase());
+              }
+              return false;
+            });
           });
-        });
+        }
         if (isValidInBase) {
           try {
             const result = parseBaseNotation(numberStr, options.inputBase, options);
@@ -5013,7 +5093,11 @@ class Parser {
               value: result,
               remainingExpr: expr.substring(endIndex)
             };
-          } catch (error) {}
+          } catch (error) {
+            if (isExplicitPrefix) {
+              throw error;
+            }
+          }
         }
       }
     }
@@ -5253,6 +5337,9 @@ class VariableManager {
     return expression.replace(numberPattern, (match) => {
       try {
         const normalize = (s) => this.inputBase.base > 10 ? s.toLowerCase() : s;
+        if (/^-?0[a-zA-Z]/.test(match)) {
+          return match;
+        }
         if (match.includes("..")) {
           const [whole, fraction] = match.split("..");
           const wholeDec = this.inputBase.toDecimal(normalize(whole));
@@ -6895,7 +6982,7 @@ class WebCalculator {
       this.inputElement.value = "";
       return;
     }
-    if (upperInput.startsWith("BASE") && upperInput !== "BASES") {
+    if (upperInput.startsWith("BASE") && !upperInput.startsWith("BASES")) {
       this.handleBaseCommand(upperInput);
       this.inputElement.value = "";
       return;
@@ -6940,8 +7027,13 @@ class WebCalculator {
       this.inputElement.value = "";
       return;
     }
-    if (upperInput === "BASES") {
-      this.showBases();
+    if (upperInput.startsWith("BASES")) {
+      const args = input.trim().substring(5).trim();
+      if (args) {
+        this.handleBasesCommand(args);
+      } else {
+        this.showBases();
+      }
       this.inputElement.value = "";
       return;
     }
@@ -7752,24 +7844,78 @@ class WebCalculator {
       this.finishEntry(output);
     }
   }
+  handleBasesCommand(args) {
+    const parts = args.split(",").map((p) => p.trim());
+    let output = "";
+    const errors = [];
+    for (const part of parts) {
+      if (part.includes(":")) {
+        const [prefix, def] = part.split(":").map((s) => s.trim());
+        if (prefix.length !== 1) {
+          errors.push(`Prefix '${prefix}' must be a single character`);
+          continue;
+        }
+        try {
+          const base = this.parseBaseSpec(def);
+          BaseSystem.registerPrefix(prefix, base);
+          output += `Linked prefix '0${prefix}' to ${base.name}
+`;
+        } catch (e) {
+          errors.push(`Error linking '${prefix}': ${e.message}`);
+        }
+      } else {
+        errors.push(`Invalid format '${part}'. Use prefix:base (e.g. t:32)`);
+      }
+    }
+    if (errors.length > 0) {
+      output += `
+Errors:
+` + errors.join(`
+`);
+    }
+    if (output) {
+      this.addToOutput("", output.trim(), errors.length > 0);
+      this.finishEntry(output.trim());
+    }
+  }
   parseBaseSpec(baseSpec) {
-    const numericBase = parseInt(baseSpec);
-    if (!isNaN(numericBase) && /^\d+$/.test(baseSpec.trim())) {
+    const trimmed = baseSpec.trim();
+    if (trimmed.includes(":") && !trimmed.startsWith("[") && !trimmed.endsWith("]")) {
+      const splitIndex = trimmed.indexOf(":");
+      const prefix = trimmed.substring(0, splitIndex).trim();
+      const def = trimmed.substring(splitIndex + 1).trim();
+      if (prefix.length === 1) {
+        try {
+          const base = this.parseBaseSpec(def);
+          BaseSystem.registerPrefix(prefix, base);
+          return base;
+        } catch (e) {}
+      }
+    }
+    const prefixSystem = BaseSystem.getSystemForPrefix(trimmed);
+    if (prefixSystem)
+      return prefixSystem;
+    const upper = trimmed.toUpperCase();
+    if (upper === "BIN" || upper === "BINARY")
+      return BaseSystem.BINARY;
+    if (upper === "OCT" || upper === "OCTAL")
+      return BaseSystem.OCTAL;
+    if (upper === "HEX" || upper === "HEXADECIMAL")
+      return BaseSystem.HEXADECIMAL;
+    if (upper === "DEC" || upper === "DECIMAL")
+      return BaseSystem.DECIMAL;
+    const numericBase = parseInt(trimmed);
+    const isNumericBaseId = !isNaN(numericBase) && /^\d+$/.test(trimmed) && numericBase >= 2 && numericBase <= 62 && !trimmed.startsWith("0");
+    if (isNumericBaseId) {
       if (this.customBases.has(numericBase)) {
         return this.customBases.get(numericBase);
       }
-      if (numericBase < 2) {
-        throw new Error("Base must be at least 2");
-      }
-      if (numericBase > 62) {
-        throw new Error("Numeric bases must be 62 or less. Use character sequence for larger bases.");
-      }
       return BaseSystem.fromBase(numericBase);
     }
-    if (baseSpec.includes("-") || /[a-zA-Z]/.test(baseSpec)) {
-      return new BaseSystem(baseSpec, `Custom Base ${baseSpec}`);
+    if (trimmed.length >= 2) {
+      return new BaseSystem(trimmed, `Custom Base ${trimmed}`);
     }
-    throw new Error("Invalid base specification. Use a number (2-62) or character sequence with dashes (e.g., '0-9a-f')");
+    throw new Error("Invalid base specification. Use a prefix (x, b, o, d, t), a name (HEX, BIN), a number (2-62), or character sequence (min length 2)");
   }
   showBases() {
     let output = `Available base systems:
@@ -7795,6 +7941,8 @@ Standard bases:
 `;
     output += `  BASE <n>            - Set base to n (2-62)
 `;
+    output += `  BASE <a>:<n>        - Set base to n (2-62) and link to prefix a (a-Z)
+`;
     output += `  BASE <sequence>     - Set custom base using character sequence
 `;
     output += `  BASE <in>-><out>    - Set input base <in> and output base <out>
@@ -7803,7 +7951,9 @@ Standard bases:
 `;
     output += `  BIN, HEX, OCT, DEC  - Quick base shortcuts
 `;
-    output += "  BASES               - Show this help";
+    output += `  BASES               - Show this help
+`;
+    output += "  BASES a:n, b:m...   - Link multiple prefixes to bases (e.g., BASES t:32, z:62)";
     this.addToOutput("", output, false);
     this.finishEntry(output);
   }
