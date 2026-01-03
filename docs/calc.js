@@ -3160,8 +3160,8 @@ function parseDecimalUncertainty(str, options = {}) {
     return interval;
   };
   const afterDecimalMatch = baseStr.match(/^(-?[\w./:^]+\.)$/);
-  if (afterDecimalMatch && !uncertaintyStr.startsWith("+-") && !uncertaintyStr.startsWith("-+")) {
-    return finalize(parseDecimalPointUncertainty(baseStr, uncertaintyStr));
+  if (afterDecimalMatch && !uncertaintyStr.includes("+") && !uncertaintyStr.includes("-")) {
+    return finalize(parseDecimalPointUncertainty(baseStr, uncertaintyStr, inputBase, options));
   }
   const baseValue = parseBaseNotation(baseStr, inputBase, { ...options, typeAware: true });
   const decimalMatch = baseStr.match(/\.([\w^/_]+)$/);
@@ -3204,14 +3204,16 @@ function parseDecimalUncertainty(str, options = {}) {
     if (!offsetStr) {
       throw new Error("Symmetric notation must have a valid number after +- or -+");
     }
+    const isRepeating = offsetStr.startsWith("#");
     const offset = parseRepeatingDecimalOrRegular(offsetStr, inputBase);
     const baseVal = BigInt(inputBase.base);
-    if (baseDecimalPlaces === 0) {
+    if (baseDecimalPlaces === 0 && !baseStr.includes(".")) {
       const upperBound = baseValue.add(offset);
       const lowerBound = baseValue.subtract(offset);
       result = new RationalInterval(lowerBound, upperBound);
     } else {
-      const nextPlaceScale = new Rational(1).divide(new Rational(baseVal).pow(baseDecimalPlaces + 1));
+      const scalePower = isRepeating ? baseDecimalPlaces : baseDecimalPlaces + 1;
+      const nextPlaceScale = new Rational(1).divide(new Rational(baseVal).pow(scalePower));
       const scaledOffset = offset.multiply(nextPlaceScale);
       const upperBound = baseValue.add(scaledOffset);
       const lowerBound = baseValue.subtract(scaledOffset);
@@ -3253,13 +3255,20 @@ function parseDecimalUncertainty(str, options = {}) {
       negativeOffset = new Integer(0);
     const baseVal = BigInt(inputBase.base);
     let upperBound, lowerBound;
-    if (baseDecimalPlaces === 0) {
+    if (baseDecimalPlaces === 0 && !baseStr.includes(".")) {
       upperBound = baseValue.add(positiveOffset);
       lowerBound = baseValue.subtract(negativeOffset);
     } else {
-      const nextPlaceScale = new Rational(1).divide(new Rational(baseVal).pow(baseDecimalPlaces + 1));
-      const scaledPositiveOffset = positiveOffset.multiply(nextPlaceScale);
-      const scaledNegativeOffset = negativeOffset.multiply(nextPlaceScale);
+      const posPart = relativeParts.find((p) => p.startsWith("+"));
+      const negPart = relativeParts.find((p) => p.startsWith("-"));
+      const posIsRepeating = posPart && posPart.substring(1).startsWith("#");
+      const negIsRepeating = negPart && negPart.substring(1).startsWith("#");
+      const posScalePower = posIsRepeating ? baseDecimalPlaces : baseDecimalPlaces + 1;
+      const negScalePower = negIsRepeating ? baseDecimalPlaces : baseDecimalPlaces + 1;
+      const posScale = new Rational(1).divide(new Rational(baseVal).pow(posScalePower));
+      const negScale = new Rational(1).divide(new Rational(baseVal).pow(negScalePower));
+      const scaledPositiveOffset = positiveOffset.multiply(posScale);
+      const scaledNegativeOffset = negativeOffset.multiply(negScale);
       upperBound = baseValue.add(scaledPositiveOffset);
       lowerBound = baseValue.subtract(scaledNegativeOffset);
     }
@@ -3267,7 +3276,7 @@ function parseDecimalUncertainty(str, options = {}) {
   }
   return finalize(result);
 }
-function parseDecimalPointUncertainty(baseStr, uncertaintyStr) {
+function parseDecimalPointUncertainty(baseStr, uncertaintyStr, baseSystem = BaseSystem.DECIMAL, options = {}) {
   if (uncertaintyStr.includes(",") || uncertaintyStr.includes(":")) {
     const rangeParts = uncertaintyStr.split(/[: ,]+/).filter((s) => s.length > 0);
     if (rangeParts.length !== 2) {
@@ -3275,22 +3284,25 @@ function parseDecimalPointUncertainty(baseStr, uncertaintyStr) {
     }
     const lowerStr = rangeParts[0].trim();
     const upperStr = rangeParts[1].trim();
-    const lowerBound = parseDecimalPointEndpoint(baseStr, lowerStr);
-    const upperBound = parseDecimalPointEndpoint(baseStr, upperStr);
+    const lowerBound = parseDecimalPointEndpoint(baseStr, lowerStr, baseSystem, options);
+    const upperBound = parseDecimalPointEndpoint(baseStr, upperStr, baseSystem, options);
     return new RationalInterval(lowerBound, upperBound);
   } else {
     throw new Error("Invalid uncertainty format for decimal point notation");
   }
 }
-function parseDecimalPointEndpoint(baseStr, endpointStr) {
+function parseDecimalPointEndpoint(baseStr, endpointStr, baseSystem = BaseSystem.DECIMAL, options = {}) {
   if (endpointStr.startsWith("#")) {
     const fullStr = baseStr + endpointStr;
     return parseRepeatingDecimal(fullStr);
-  } else if (/^\d+$/.test(endpointStr)) {
-    const fullStr = baseStr + endpointStr;
-    return new Rational(fullStr);
   } else {
-    throw new Error(`Invalid endpoint format: ${endpointStr}`);
+    const fullStr = baseStr + endpointStr;
+    try {
+      const result = parseBaseNotation(fullStr, baseSystem, { ...options, typeAware: true });
+      return result instanceof Integer ? result.toRational() : result;
+    } catch (e) {
+      throw new Error(`Invalid endpoint format: ${endpointStr}`);
+    }
   }
 }
 function parseRepeatingDecimalOrRegular(str, baseSystem = BaseSystem.DECIMAL) {
@@ -3634,9 +3646,6 @@ function parseBaseNotation(numberStr, baseSystem, options = {}) {
     }
     const integerPart = parts[0] || "0";
     const fractionalPart = parts[1] || "";
-    if (fractionalPart === "") {
-      throw new Error("Decimal point must be followed by fractional digits");
-    }
     const fullStr = integerPart + fractionalPart;
     if (!baseSystem.isValidString(fullStr)) {
       throw new Error(`String "${baseNumber}" contains characters not valid for ${baseSystem.name}`);
@@ -5381,7 +5390,7 @@ class VariableManager {
       const uppercaseChars = this.inputBase.characters.filter((c) => /[a-z]/.test(c)).map((c) => c.toUpperCase()).map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("");
       validChars += uppercaseChars;
     }
-    const numberPattern = new RegExp(`\\b(-?[${validChars}]+(?:\\.[${validChars}]+)?(?:\\.\\.[${validChars}]+(?:\\/[${validChars}]+)?)?(?:\\/[${validChars}]+)?(?:\\_\\^-?[${validChars}]+)?)(?:\\[([^\\]]+)\\](?:[Ee][+-]?[${validChars}]+|\\_\\^-?[${validChars}]+)?|\\b(?!\\s*\\[))`, "g");
+    const numberPattern = new RegExp(`\\b(-?[${validChars}]+(?:\\.[${validChars}]*)?(?:\\.\\.[${validChars}]+(?:\\/[${validChars}]+)?)?(?:\\/[${validChars}]+)?(?:\\_\\^-?[${validChars}]+)?)(?:\\[([^\\]]+)\\](?:[Ee][+-]?[${validChars}]+|\\_\\^-?[${validChars}]+)?|\\b(?!\\s*\\[))`, "g");
     return expression.replace(numberPattern, (match, baseValue, uncertainty) => {
       if (uncertainty) {
         return match;
@@ -5749,7 +5758,7 @@ class VariableManager {
         }
       }
       let substitutedFunctions = expression;
-      const functionCallRegex = /(?:^|[^a-zA-Z0-9_@])((?:@?[A-Z][a-zA-Z0-9]*))\s*\(/g;
+      const functionCallRegex = /(?:^|[^a-zA-Z0-9_@])((?:@?[a-zA-Z][a-zA-Z0-9]*))\s*\(/g;
       let match;
       while ((match = functionCallRegex.exec(substitutedFunctions)) !== null) {
         const fullMatch = match[0];
@@ -5881,9 +5890,15 @@ class VariableManager {
         });
       } catch (parseError) {
         const trimmed = preprocessed.trim();
-        const rawName = trimmed.startsWith("@") ? trimmed.substring(1) : trimmed;
-        if (this.functions.has(rawName)) {
-          return { type: "expression", result: rawName };
+        const tokens = trimmed.split(/[^a-zA-Z0-9@]/).filter((t) => t.length > 0);
+        for (const token of tokens) {
+          const rawName = token.startsWith("@") ? token.substring(1) : token;
+          if (this.functions.has(rawName)) {
+            if (tokens.length > 1 || trimmed.includes("(") || trimmed.includes(")")) {
+              throw new Error(`Function '${rawName}' cannot be used as a value in this context`);
+            }
+            return { type: "expression", result: rawName };
+          }
         }
         throw parseError;
       }
