@@ -287,8 +287,16 @@ class BaseSystem {
     BaseSystem.#prefixMap.delete(prefix);
   }
   static getSystemForPrefix(prefix) {
+    if (prefix === "D")
+      return null;
     if (BaseSystem.#prefixMap.has(prefix)) {
       return BaseSystem.#prefixMap.get(prefix);
+    }
+    const lower = prefix.toLowerCase();
+    if (BaseSystem.#prefixMap.has(lower)) {
+      if (lower === "d" && prefix !== "d")
+        return;
+      return BaseSystem.#prefixMap.get(lower);
     }
     return;
   }
@@ -3448,6 +3456,8 @@ function parseBaseNotation(numberStr, baseSystem, options = {}) {
     if (registeredBase) {
       baseSystem = registeredBase;
       numberStr = numberStr.substring(2);
+    } else if (prefix === "D") {
+      numberStr = numberStr.substring(2);
     } else {
       if (prefix.toLowerCase() !== "e") {
         throw new Error(`Invalid or unregistered prefix '0${prefix}'`);
@@ -4986,6 +4996,9 @@ class Parser {
         options = { ...options, inputBase: registeredBase };
         isExplicitPrefix = true;
         expr = (isNegative3 ? "-" : "") + expr.substring(prefixMatch[0].length);
+      } else if (prefix === "D") {
+        isExplicitPrefix = true;
+        expr = (isNegative3 ? "-" : "") + expr.substring(prefixMatch[0].length);
       } else {
         if (prefix.toLowerCase() !== "e") {
           throw new Error(`Invalid or unregistered prefix '0${prefix}'`);
@@ -5040,9 +5053,11 @@ class Parser {
             const potentialPrefix = expr.substring(endIndex, endIndex + 2);
             const subPrefixMatch = potentialPrefix.match(/^0([a-zA-Z])/);
             if (subPrefixMatch) {
-              const subBase = BaseSystem.getSystemForPrefix(subPrefixMatch[1]);
-              if (subBase) {
-                validationBase = subBase;
+              const prefixChar = subPrefixMatch[1];
+              const subBase = BaseSystem.getSystemForPrefix(prefixChar);
+              if (subBase || prefixChar === "D") {
+                if (subBase)
+                  validationBase = subBase;
                 endIndex += 2;
               }
             }

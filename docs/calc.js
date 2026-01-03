@@ -287,8 +287,16 @@ class BaseSystem {
     BaseSystem.#prefixMap.delete(prefix);
   }
   static getSystemForPrefix(prefix) {
+    if (prefix === "D")
+      return null;
     if (BaseSystem.#prefixMap.has(prefix)) {
       return BaseSystem.#prefixMap.get(prefix);
+    }
+    const lower = prefix.toLowerCase();
+    if (BaseSystem.#prefixMap.has(lower)) {
+      if (lower === "d" && prefix !== "d")
+        return;
+      return BaseSystem.#prefixMap.get(lower);
     }
     return;
   }
@@ -3448,6 +3456,8 @@ function parseBaseNotation(numberStr, baseSystem, options = {}) {
     if (registeredBase) {
       baseSystem = registeredBase;
       numberStr = numberStr.substring(2);
+    } else if (prefix === "D") {
+      numberStr = numberStr.substring(2);
     } else {
       if (prefix.toLowerCase() !== "e") {
         throw new Error(`Invalid or unregistered prefix '0${prefix}'`);
@@ -4986,6 +4996,9 @@ class Parser {
         options = { ...options, inputBase: registeredBase };
         isExplicitPrefix = true;
         expr = (isNegative3 ? "-" : "") + expr.substring(prefixMatch[0].length);
+      } else if (prefix === "D") {
+        isExplicitPrefix = true;
+        expr = (isNegative3 ? "-" : "") + expr.substring(prefixMatch[0].length);
       } else {
         if (prefix.toLowerCase() !== "e") {
           throw new Error(`Invalid or unregistered prefix '0${prefix}'`);
@@ -5040,9 +5053,11 @@ class Parser {
             const potentialPrefix = expr.substring(endIndex, endIndex + 2);
             const subPrefixMatch = potentialPrefix.match(/^0([a-zA-Z])/);
             if (subPrefixMatch) {
-              const subBase = BaseSystem.getSystemForPrefix(subPrefixMatch[1]);
-              if (subBase) {
-                validationBase = subBase;
+              const prefixChar = subPrefixMatch[1];
+              const subBase = BaseSystem.getSystemForPrefix(prefixChar);
+              if (subBase || prefixChar === "D") {
+                if (subBase)
+                  validationBase = subBase;
                 endIndex += 2;
               }
             }
@@ -5457,7 +5472,7 @@ class VariableManager {
             }
           }
           if (isDigit) {
-            throw new Error(`Ambiguous reference '${name}'. Use @${name} for function or explicit base prefix (e.g. 0d${name} or 0x${name}) for number.`);
+            throw new Error(`Ambiguous reference '${name}'. Use @${name} for function or explicit base prefix (e.g. 0D${name} or 0x${name}) for number.`);
           }
           const f = this.functions.get(normalizedName);
           return {
@@ -5690,13 +5705,14 @@ class VariableManager {
         const command = baseCommandMatch[1];
         const rest = baseCommandMatch[2];
         let tempBase = null;
-        if (command === "HEX" || command === "0x")
+        const upperCommand = command.toUpperCase();
+        if (upperCommand === "HEX" || upperCommand === "0X")
           tempBase = BaseSystem.HEXADECIMAL;
-        else if (command === "BIN" || command === "0b")
+        else if (upperCommand === "BIN" || upperCommand === "0B")
           tempBase = BaseSystem.BINARY;
-        else if (command === "OCT" || command === "0o")
+        else if (upperCommand === "OCT" || upperCommand === "0O")
           tempBase = BaseSystem.OCTAL;
-        else if (command === "DEC" || command === "0d")
+        else if (upperCommand === "DEC" || command === "0d")
           tempBase = BaseSystem.DECIMAL;
         else if (command.startsWith("BASE")) {
           const match2 = command.match(/^BASE(\d+)$/);
@@ -5813,7 +5829,7 @@ class VariableManager {
             isDigit2 = [...name].every((c) => validChars.includes(c));
           }
           if (isDigit2 && !hasPrefix) {
-            throw new Error(`Ambiguous reference '${name}'. Use @${name} for function or explicit base prefix (e.g. 0d${name} or 0x${name}) for number.`);
+            throw new Error(`Ambiguous reference '${name}'. Use @${name} for function or explicit base prefix (e.g. 0D${name} or 0x${name}) for number.`);
           }
           valStr = normalizedName;
         }
@@ -5829,7 +5845,7 @@ class VariableManager {
         } else {
           if (isDigit) {
             const type = isVar ? "variable" : "function";
-            throw new Error(`Ambiguous reference '${name}'. Use @${name} for ${type} or explicit base prefix (e.g. 0d${name} or 0x${name}) for number.`);
+            throw new Error(`Ambiguous reference '${name}'. Use @${name} for ${type} or explicit base prefix (e.g. 0D${name} or 0x${name}) for number.`);
           } else {
             if (isFunc)
               return `${prefixChar}${valStr}`;
