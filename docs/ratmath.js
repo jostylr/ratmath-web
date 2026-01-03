@@ -4895,7 +4895,7 @@ class Parser {
         return cfResult;
       } catch (error) {}
     }
-    if (expr.includes(".") && !expr.includes("#") && !expr.includes(":") && !expr.includes("[")) {
+    if (expr.includes(".") && !expr.includes("#") && !expr.includes(":") && !expr.includes("[") && (!options.inputBase || options.inputBase === BaseSystem.DECIMAL)) {
       let endIndex = 0;
       let hasDecimalPoint = false;
       if (expr[endIndex] === "-") {
@@ -4997,6 +4997,8 @@ class Parser {
           const char = expr[endIndex];
           if (options.inputBase.charMap.has(char)) {
             endIndex++;
+          } else if (/[0-9]/.test(char)) {
+            endIndex++;
           } else if (char === "." && endIndex + 1 < expr.length && expr[endIndex + 1] === ".") {
             if (hasMixedNumber || hasDecimalPoint || hasFraction || hasColon)
               break;
@@ -5033,6 +5035,13 @@ class Parser {
               value: result,
               remainingExpr: expr.substring(endIndex)
             };
+          } else if (options.inputBase && options.inputBase !== BaseSystem.DECIMAL) {
+            throw new Error(`Invalid number format for ${options.inputBase.name}`);
+          }
+        } else if (options.inputBase && options.inputBase !== BaseSystem.DECIMAL) {
+          const firstChar = expr.startsWith("-") ? expr[1] : expr[0];
+          if (/[0-9]/.test(firstChar)) {
+            throw new Error(`Invalid number format for ${options.inputBase.name}`);
           }
         }
       } catch (error) {}
@@ -5201,6 +5210,8 @@ class Parser {
           if (endIndex < expr.length && (expr[endIndex] === "+" || expr[endIndex] === "-")) {
             endIndex++;
           }
+        } else if (/[0-9]/.test(char)) {
+          endIndex++;
         } else {
           break;
         }
@@ -5246,6 +5257,13 @@ class Parser {
               throw error;
             }
           }
+        } else if (options.inputBase && options.inputBase !== BaseSystem.DECIMAL) {
+          throw new Error(`Invalid number format for ${options.inputBase.name}`);
+        }
+      } else if (options.inputBase && options.inputBase !== BaseSystem.DECIMAL) {
+        const firstChar = expr.startsWith("-") ? expr[1] : expr[0];
+        if (/[0-9]/.test(firstChar)) {
+          throw new Error(`Invalid number format for ${options.inputBase.name}`);
         }
       }
     }
