@@ -5322,6 +5322,27 @@ class VariableManager {
     this.functions = new Map;
     this.inputBase = null;
     this.customBases = new Map;
+    this.variablePattern = /^(?:@?([a-z][a-zA-Z0-9]*))$/;
+    this.functionPattern = /^(?:@?([A-Z][a-zA-Z0-9]*))$/;
+  }
+  setVariable(name, value) {
+    if (!this.variablePattern.test(name)) {
+      if (this.functionPattern.test(name)) {
+        throw new Error(`Invalid variable name '${name}'. Function names (starting with Uppercase) cannot be assigned values directly. Use '${name}(...) -> ...' to define a function.`);
+      }
+      throw new Error(`Invalid variable name '${name}'. Variables must start with a lowercase letter or @lowercase.`);
+    }
+    const normalizedName = name.startsWith("@") ? name.substring(1) : name;
+    this.variables.set(normalizedName, value);
+  }
+  defineFunction(name, params, body) {
+    if (!this.functionPattern.test(name)) {
+      if (this.variablePattern.test(name)) {
+        throw new Error(`Invalid function name '${name}'. Function definitions must use names starting with an Uppercase letter or @Uppercase.`);
+      }
+      throw new Error(`Invalid function name '${name}'. Functions must start with an Uppercase letter or @Uppercase.`);
+    }
+    this.functions.set(name, { params, body });
   }
   setInputBase(baseSystem) {
     this.inputBase = baseSystem;
@@ -5403,31 +5424,80 @@ class VariableManager {
     });
   }
   processInput(input) {
-    const trimmed = input.trim();
-    const assignmentMatch = trimmed.match(/^([a-zA-Z])\s*=\s*(.+)$/);
-    if (assignmentMatch) {
-      const [, varName, expression] = assignmentMatch;
-      return this.handleAssignment(varName, expression);
+    try {
+      const trimmed = input.trim();
+      const funcDefMatch = trimmed.match(/^(@?[a-zA-Z][a-zA-Z0-9]*)\s*\(([^)]*)\)\s*->\s*(.+)$/);
+      if (funcDefMatch) {
+        const [, funcName, paramStr, body] = funcDefMatch;
+        const params = paramStr.split(",").map((p) => p.trim()).filter((p) => p);
+        return this.handleFunctionDefinition(funcName, params, body);
+      }
+      const arrowAssignMatch = trimmed.match(/^(@?[a-zA-Z][a-zA-Z0-9]*)\s*=\s*(?:(?:\(([^)]*)\))|([a-zA-Z][a-zA-Z0-9]*))\s*->\s*(.+)$/);
+      if (arrowAssignMatch) {
+        const [, name, paramsInParens, singleParam, body] = arrowAssignMatch;
+        const params = (paramsInParens !== undefined ? paramsInParens : singleParam).split(",").map((p) => p.trim()).filter((p) => p);
+        return this.handleFunctionDefinition(name, params, body);
+      }
+      const assignmentMatch = trimmed.match(/^(@?[a-zA-Z][a-zA-Z0-9]*)\s*=\s*(.+)$/);
+      if (assignmentMatch) {
+        const [, varName, expression] = assignmentMatch;
+        return this.handleAssignment(varName, expression);
+      }
+      if (/^(SUM|PROD|SEQ)/.test(trimmed)) {}
+      const funcLookupMatch = trimmed.match(/^(@?[A-Z][a-zA-Z0-9]*)$/);
+      if (funcLookupMatch) {
+        const name = funcLookupMatch[1];
+        const normalizedName = name.startsWith("@") ? name.substring(1) : name;
+        if (this.functions.has(normalizedName)) {
+          let isDigit = false;
+          if (this.inputBase) {
+            const validChars = this.inputBase.base > 10 ? this.inputBase.characters.concat(this.inputBase.characters.filter((c) => /[a-z]/.test(c)).map((c) => c.toUpperCase())) : this.inputBase.characters;
+            if (!name.startsWith("@")) {
+              isDigit = [...name].every((c) => validChars.includes(c));
+            }
+          }
+          if (isDigit) {
+            throw new Error(`Ambiguous reference '${name}'. Use @${name} for function or explicit base prefix (e.g. 0d${name} or 0x${name}) for number.`);
+          }
+          const f = this.functions.get(normalizedName);
+          return {
+            type: "function_display",
+            result: `${normalizedName}(${f.params.join(", ")}) -> ${f.body}`,
+            message: `${normalizedName}(${f.params.join(", ")}) -> ${f.body}`
+          };
+        }
+      }
+      return this.evaluateExpression(trimmed);
+    } catch (error) {
+      return {
+        type: "error",
+        message: error.message
+      };
     }
-    const functionMatch = trimmed.match(/^([A-Z])\[([a-zA-Z,\s]+)\]\s*=\s*(.+)$/);
-    if (functionMatch) {
-      const [, funcName, paramStr, expression] = functionMatch;
-      const params = paramStr.split(",").map((p) => p.trim()).filter((p) => p.length === 1);
-      return this.handleFunctionDefinition(funcName, params, expression);
-    }
-    const callMatch = trimmed.match(/^([A-Z])\(([^)]*)\)$/);
-    if (callMatch) {
-      const [, funcName, argsStr] = callMatch;
-      return this.handleFunctionCall(funcName, argsStr);
-    }
-    const specialMatch = trimmed.match(/^(SUM|PROD|SEQ)\[([a-zA-Z])\]\(([^,]+),\s*([^,]+),\s*([^,]+)(?:,\s*([^)]+))?\)$/);
-    if (specialMatch) {
-      const [, keyword, variable, expression, start, end, increment] = specialMatch;
-      return this.handleSpecialFunction(keyword, variable, expression, start, end, increment || "1");
-    }
-    return this.evaluateExpression(trimmed);
   }
   handleAssignment(varName, expression) {
+    const isUpperCase = /^[A-Z][a-zA-Z0-9]*$/.test(varName) || varName.startsWith("@") && /^[A-Z]/.test(varName.substring(1));
+    if (isUpperCase) {
+      const aliasMatch = expression.trim().match(/^(@?[A-Z][a-zA-Z0-9]*)$/);
+      if (aliasMatch) {
+        const sourceName = aliasMatch[1];
+        const normSource = sourceName.startsWith("@") ? sourceName.substring(1) : sourceName;
+        const normTarget = varName.startsWith("@") ? varName.substring(1) : varName;
+        if (this.functions.has(normSource)) {
+          const sourceDef = this.functions.get(normSource);
+          this.functions.set(normTarget, { ...sourceDef });
+          return {
+            type: "function",
+            result: null,
+            message: `Function ${normTarget} defined as alias of ${normSource}`
+          };
+        }
+      }
+      return {
+        type: "error",
+        message: `Function names (starting with Uppercase) cannot be assigned values directly. To define a function, use '->' syntax or alias an existing function.`
+      };
+    }
     try {
       const result = this.evaluateExpression(expression);
       if (result.type === "error") {
@@ -5458,7 +5528,7 @@ class VariableManager {
       };
     }
   }
-  handleFunctionDefinition(funcName, params, expression) {
+  handleFunctionDefinition(funcName, params, body) {
     for (const param of params) {
       if (param.length !== 1 || !/[a-zA-Z]/.test(param)) {
         return {
@@ -5467,7 +5537,7 @@ class VariableManager {
         };
       }
     }
-    this.functions.set(funcName, { params, expression });
+    this.functions.set(funcName, { params, body });
     return {
       type: "function",
       result: null,
@@ -5506,7 +5576,7 @@ class VariableManager {
         }
         this.variables.set(param, argValues[i]);
       }
-      const result = this.evaluateExpression(func.expression);
+      const result = this.evaluateExpression(func.body);
       for (const [param, oldValue] of oldValues) {
         this.variables.set(param, oldValue);
       }
@@ -5613,34 +5683,208 @@ class VariableManager {
       };
     }
   }
-  evaluateExpression(expression) {
+  evaluateExpression(expression, localScope = new Map) {
     try {
-      const specialMatch = expression.match(/^(SUM|PROD|SEQ)\[([a-zA-Z])\]\(([^,]+),\s*([^,]+),\s*([^,]+)(?:,\s*([^)]+))?\)$/);
+      const baseCommandMatch = expression.match(/^([A-Z0-9]+)\s+(.+)$/);
+      if (baseCommandMatch) {
+        const command = baseCommandMatch[1];
+        const rest = baseCommandMatch[2];
+        let tempBase = null;
+        if (command === "HEX" || command === "0x")
+          tempBase = BaseSystem.HEXADECIMAL;
+        else if (command === "BIN" || command === "0b")
+          tempBase = BaseSystem.BINARY;
+        else if (command === "OCT" || command === "0o")
+          tempBase = BaseSystem.OCTAL;
+        else if (command === "DEC" || command === "0d")
+          tempBase = BaseSystem.DECIMAL;
+        else if (command.startsWith("BASE")) {
+          const match2 = command.match(/^BASE(\d+)$/);
+          if (match2) {
+            const baseNum = parseInt(match2[1]);
+            if (baseNum >= 2 && baseNum <= 62) {
+              try {
+                tempBase = BaseSystem.fromBase(baseNum);
+              } catch (e) {}
+            }
+          }
+        }
+        if (tempBase) {
+          const originalBase = this.inputBase;
+          try {
+            this.setInputBase(tempBase);
+            return this.evaluateExpression(rest, localScope);
+          } finally {
+            this.setInputBase(originalBase);
+          }
+        }
+      }
+      let substitutedFunctions = expression;
+      const functionCallRegex = /(?:^|[^a-zA-Z0-9_@])((?:@?[A-Z][a-zA-Z0-9]*))\s*\(/g;
+      let match;
+      while ((match = functionCallRegex.exec(substitutedFunctions)) !== null) {
+        const fullMatch = match[0];
+        const funcName = match[1];
+        const prefixLen = fullMatch.indexOf(funcName);
+        const startIndex = match.index + prefixLen;
+        const openParenIndex = startIndex + funcName.length;
+        let depth = 1;
+        let closeParenIndex = -1;
+        for (let i = openParenIndex + 1;i < substitutedFunctions.length; i++) {
+          if (substitutedFunctions[i] === "(")
+            depth++;
+          else if (substitutedFunctions[i] === ")")
+            depth--;
+          if (depth === 0) {
+            closeParenIndex = i;
+            break;
+          }
+        }
+        if (closeParenIndex !== -1) {
+          const argsStr = substitutedFunctions.substring(openParenIndex + 1, closeParenIndex);
+          const normalizedFuncName = funcName.startsWith("@") ? funcName.substring(1) : funcName;
+          let funcDef = this.functions.get(normalizedFuncName);
+          if (!funcDef && localScope.has(normalizedFuncName)) {
+            const possibleAlias = localScope.get(normalizedFuncName);
+            if (typeof possibleAlias === "string") {
+              const aliasNorm = possibleAlias.startsWith("@") ? possibleAlias.substring(1) : possibleAlias;
+              if (this.functions.has(aliasNorm)) {
+                funcDef = this.functions.get(aliasNorm);
+              }
+            }
+          }
+          if (funcDef) {
+            const args = [];
+            let currentArg = "";
+            let argDepth = 0;
+            for (let i = 0;i < argsStr.length; i++) {
+              const char = argsStr[i];
+              if (char === "(" || char === "[" || char === "{")
+                argDepth++;
+              else if (char === ")" || char === "]" || char === "}")
+                argDepth--;
+              if (char === "," && argDepth === 0) {
+                args.push(currentArg.trim());
+                currentArg = "";
+              } else {
+                currentArg += char;
+              }
+            }
+            if (currentArg.trim() !== "")
+              args.push(currentArg.trim());
+            if (args.length !== funcDef.params.length) {
+              throw new Error(`Function '${funcName}' expects ${funcDef.params.length} arguments, got ${args.length}`);
+            }
+            const callBindScope = new Map;
+            for (let i = 0;i < funcDef.params.length; i++) {
+              const argResult = this.evaluateExpression(args[i], localScope);
+              if (argResult.type === "error")
+                throw new Error(argResult.message);
+              callBindScope.set(funcDef.params[i], argResult.result);
+            }
+            const bodyResult = this.evaluateExpression(funcDef.body, callBindScope);
+            if (bodyResult.type === "error")
+              throw new Error(bodyResult.message);
+            const resultStr = this.formatValueWithPrefix(bodyResult.result);
+            substitutedFunctions = substitutedFunctions.substring(0, startIndex) + resultStr + substitutedFunctions.substring(closeParenIndex + 1);
+            functionCallRegex.lastIndex = 0;
+            continue;
+          }
+        }
+      }
+      let substituted = substitutedFunctions;
+      const allVars = new Map([...this.variables, ...localScope]);
+      substituted = substituted.replace(/(^|[^a-zA-Z0-9])(@?)([a-zA-Z][a-zA-Z0-9]*)/g, (match2, prefixChar, atSign, name) => {
+        const normalizedName = name;
+        const isVar = allVars.has(normalizedName);
+        const isFunc = this.functions.has(normalizedName);
+        const hasPrefix = atSign === "@";
+        if (!isVar && !isFunc) {
+          return match2;
+        }
+        let valStr;
+        if (isVar) {
+          const value = allVars.get(normalizedName);
+          valStr = this.formatValueWithPrefix(value);
+        } else if (isFunc) {
+          let isDigit2 = false;
+          if (this.inputBase) {
+            const validChars = this.inputBase.base > 10 ? this.inputBase.characters.concat(this.inputBase.characters.filter((c) => /[a-z]/.test(c)).map((c) => c.toUpperCase())) : this.inputBase.characters;
+            isDigit2 = [...name].every((c) => validChars.includes(c));
+          }
+          if (isDigit2 && !hasPrefix) {
+            throw new Error(`Ambiguous reference '${name}'. Use @${name} for function or explicit base prefix (e.g. 0d${name} or 0x${name}) for number.`);
+          }
+          valStr = normalizedName;
+        }
+        let isDigit = false;
+        if (this.inputBase) {
+          const validChars = this.inputBase.base > 10 ? this.inputBase.characters.concat(this.inputBase.characters.filter((c) => /[a-z]/.test(c)).map((c) => c.toUpperCase())) : this.inputBase.characters;
+          isDigit = [...name].every((c) => validChars.includes(c));
+        }
+        if (hasPrefix) {
+          if (isFunc)
+            return `${prefixChar}${valStr}`;
+          return `${prefixChar}(${valStr})`;
+        } else {
+          if (isDigit) {
+            const type = isVar ? "variable" : "function";
+            throw new Error(`Ambiguous reference '${name}'. Use @${name} for ${type} or explicit base prefix (e.g. 0d${name} or 0x${name}) for number.`);
+          } else {
+            if (isFunc)
+              return `${prefixChar}${valStr}`;
+            return `${prefixChar}(${valStr})`;
+          }
+        }
+      });
+      const preprocessed = this.preprocessExpression(substituted);
+      const specialMatch = preprocessed.match(/^(SUM|PROD|SEQ)\[([a-zA-Z])\]\(([^,]+),\s*([^,]+),\s*([^,]+)(?:,\s*([^)]+))?\)$/);
       if (specialMatch) {
         const [, keyword, variable, expr, start, end, increment] = specialMatch;
         return this.handleSpecialFunction(keyword, variable, expr, start, end, increment || "1");
       }
-      let substituted = expression;
-      for (const [varName, value] of this.variables) {
-        const pattern = new RegExp(`\\b${varName}\\b`, "g");
-        substituted = substituted.replace(pattern, `(${this.formatValue(value)})`);
+      let result;
+      try {
+        result = Parser.parse(preprocessed, {
+          typeAware: true,
+          customBases: this.customBases,
+          inputBase: this.inputBase
+        });
+      } catch (parseError) {
+        const trimmed = preprocessed.trim();
+        const rawName = trimmed.startsWith("@") ? trimmed.substring(1) : trimmed;
+        if (this.functions.has(rawName)) {
+          return { type: "expression", result: rawName };
+        }
+        throw parseError;
       }
-      const preprocessed = this.preprocessExpression(substituted);
-      const result = Parser.parse(preprocessed, {
-        typeAware: true,
-        customBases: this.customBases,
-        inputBase: this.inputBase
-      });
-      return {
-        type: "expression",
-        result
-      };
+      return { type: "expression", result };
     } catch (error) {
-      return {
-        type: "error",
-        message: error.message
-      };
+      return { type: "error", message: error.message };
     }
+  }
+  formatValueWithPrefix(value) {
+    if (!value)
+      return "0";
+    if (value.type === "sequence") {
+      const formatted = value.values.map((v) => this.formatValueWithPrefix(v));
+      return `[${formatted.join(", ")}]`;
+    }
+    if (value instanceof RationalInterval) {
+      return `${this.formatValueWithPrefix(value.low)}:${this.formatValueWithPrefix(value.high)}`;
+    }
+    let str;
+    if (value instanceof Rational) {
+      str = value.toString();
+    } else if (value instanceof Integer) {
+      str = value.value.toString();
+    } else {
+      str = value.toString();
+    }
+    if (/^-?[\d./]+$/.test(str) && !str.includes("0d")) {
+      return str.replace(/^(-)?/, "$10d");
+    }
+    return str;
   }
   formatValue(value) {
     if (value && value.type === "sequence") {
