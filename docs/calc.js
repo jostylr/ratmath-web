@@ -5372,10 +5372,11 @@ class VariableManager {
   constructor() {
     this.variables = new Map;
     this.functions = new Map;
+    this.modules = new Map;
     this.inputBase = null;
     this.customBases = new Map;
-    this.variablePattern = /^(?:@?([a-z][a-zA-Z0-9]*))$/;
-    this.functionPattern = /^(?:@?([A-Z][a-zA-Z0-9]*))$/;
+    this.variablePattern = /^(?:@@[a-zA-Z0-9_]+@)?(?:@?([a-z][a-zA-Z0-9_]*))$/;
+    this.functionPattern = /^(?:@@[a-zA-Z0-9_]+@)?(?:@?([A-Z][a-zA-Z0-9_]*))$/;
   }
   setVariable(name, value) {
     if (!this.variablePattern.test(name)) {
@@ -5387,14 +5388,75 @@ class VariableManager {
     const normalizedName = name.startsWith("@") ? name.substring(1) : name;
     this.variables.set(normalizedName, value);
   }
-  defineFunction(name, params, body) {
+  defineFunction(name, params, body, doc = "") {
     if (!this.functionPattern.test(name)) {
       if (this.variablePattern.test(name)) {
         throw new Error(`Invalid function name '${name}'. Function definitions must use names starting with an Uppercase letter or @Uppercase.`);
       }
       throw new Error(`Invalid function name '${name}'. Functions must start with an Uppercase letter or @Uppercase.`);
     }
-    this.functions.set(name, { params, body });
+    this.functions.set(name, { params, body, doc, type: "def" });
+  }
+  registerJSFunction(name, handler, params, doc = "") {
+    if (!this.functionPattern.test(name)) {
+      throw new Error(`Invalid function name '${name}'. Functions must start with an Uppercase letter.`);
+    }
+    this.functions.set(name, { type: "js", handler, params, doc });
+  }
+  getHelp(name) {
+    if (name) {
+      const normalized = name.startsWith("@@") ? name : name.startsWith("@") ? name.substring(1) : name;
+      if (this.functions.has(normalized)) {
+        const f = this.functions.get(normalized);
+        const sig = `${normalized}(${f.params.join(", ")})`;
+        return `${sig}
+${f.doc || "No documentation available."}`;
+      }
+      return `Function '${name}' not found.`;
+    }
+    const entries = [];
+    for (const [fname, f] of this.functions) {
+      let snippet = f.doc ? f.doc.split(`
+`)[0] : "";
+      if (snippet.length > 50)
+        snippet = snippet.substring(0, 47) + "...";
+      entries.push(`${fname}(${f.params.join(",")}) - ${snippet}`);
+    }
+    return `Available Functions:
+${entries.join(`
+`)}`;
+  }
+  loadModule(moduleName, scope) {
+    const prefix = `@@${moduleName}@`;
+    if (scope.functions) {
+      for (const [name, def] of Object.entries(scope.functions)) {
+        const qualifiedName = `${prefix}${name}`;
+        this.functions.set(qualifiedName, { ...def });
+        this.functions.set(name, { ...def, isImported: true, module: moduleName });
+      }
+    }
+    if (scope.variables) {
+      for (const [name, val] of Object.entries(scope.variables)) {
+        const qualifiedName = `${prefix}${name}`;
+        this.variables.set(qualifiedName, val);
+        this.variables.set(name, val);
+      }
+    }
+    this.modules.set(moduleName, scope);
+    return `Module '${moduleName}' loaded.`;
+  }
+  unloadModule(moduleName) {
+    if (!this.modules.has(moduleName))
+      return `Module '${moduleName}' not loaded.`;
+    let count = 0;
+    for (const [name, def] of this.functions) {
+      if (def.isImported && def.module === moduleName) {
+        this.functions.delete(name);
+        count++;
+      }
+    }
+    this.modules.delete(moduleName);
+    return `Module '${moduleName}' unloaded (${count} functions removed).`;
   }
   setInputBase(baseSystem) {
     this.inputBase = baseSystem;
@@ -5584,15 +5646,19 @@ class VariableManager {
     }
   }
   handleFunctionDefinition(funcName, params, body) {
+    if (params.length === 0) {}
+    if (new Set(params).size !== params.length) {
+      return { type: "error", message: "Duplicate parameter names" };
+    }
     for (const param of params) {
-      if (param.length !== 1 || !/[a-zA-Z]/.test(param)) {
+      if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(param)) {
         return {
           type: "error",
-          message: `Function parameters must be single letters, got: ${param}`
+          message: `Invalid parameter name '${param}'. Must start with letter.`
         };
       }
     }
-    this.functions.set(funcName, { params, body });
+    this.functions.set(funcName, { params, body, type: "def", doc: `User defined function: ${body}` });
     return {
       type: "function",
       result: null,
@@ -5607,7 +5673,25 @@ class VariableManager {
       };
     }
     const func = this.functions.get(funcName);
-    const args = argsStr.trim() ? argsStr.split(",").map((s) => s.trim()) : [];
+    if (func.type === "js") {}
+    const args = [];
+    let currentArg = "";
+    let depth = 0;
+    for (let i = 0;i < argsStr.length; i++) {
+      const char = argsStr[i];
+      if (char === "(" || char === "[" || char === "{")
+        depth++;
+      else if (char === ")" || char === "]" || char === "}")
+        depth--;
+      if (char === "," && depth === 0) {
+        args.push(currentArg.trim());
+        currentArg = "";
+      } else {
+        currentArg += char;
+      }
+    }
+    if (currentArg.trim() !== "")
+      args.push(currentArg.trim());
     if (args.length !== func.params.length) {
       return {
         type: "error",
@@ -5616,30 +5700,61 @@ class VariableManager {
     }
     try {
       const argValues = [];
-      for (const arg of args) {
-        const result2 = this.evaluateExpression(arg);
-        if (result2.type === "error") {
-          return result2;
+      for (let i = 0;i < args.length; i++) {
+        const argRaw = args[i];
+        const paramName = func.params[i];
+        const isParamFunction = /^[A-Z]/.test(paramName);
+        const isParamValue = /^[a-z]/.test(paramName);
+        const lambdaMatch = argRaw.match(/^([a-zA-Z][a-zA-Z0-9_]*)\s*->\s*(.+)$/);
+        if (lambdaMatch) {
+          if (!isParamFunction) {
+            throw new Error(`Argument mismatch for '${paramName}': Expected value (compatible with lowercase), got Lambda function.`);
+          }
+          const [, lambdaParam, lambdaBody] = lambdaMatch;
+          const anonName = `@@Anon@${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+          this.functions.set(anonName, {
+            params: [lambdaParam.trim()],
+            body: lambdaBody.trim(),
+            type: "def",
+            doc: "Anonymous Lambda"
+          });
+          argValues.push(anonName);
+          continue;
         }
+        if (isParamFunction) {
+          const trimmed = argRaw.trim();
+          if (/^(?:@@[a-zA-Z0-9_]+@)?@?[a-zA-Z0-9_]+$/.test(trimmed)) {
+            const norm = trimmed.startsWith("@@") ? trimmed : trimmed.startsWith("@") ? trimmed.substring(1) : trimmed;
+            if (this.functions.has(norm)) {
+              argValues.push(norm);
+              continue;
+            } else {
+              throw new Error(`Argument mismatch for '${paramName}': Expected existing function, got unknown '${trimmed}'`);
+            }
+          } else {
+            throw new Error(`Argument mismatch for '${paramName}': Expected function name or lambda, got expression.`);
+          }
+        }
+        const result2 = this.evaluateExpression(argRaw);
+        if (result2.type === "error")
+          return result2;
         argValues.push(result2.result);
       }
+      if (func.type === "js") {
+        try {
+          const res = func.handler(...argValues);
+          return { type: "expression", result: res };
+        } catch (e) {
+          return { type: "error", message: `JS Function ${funcName} error: ${e.message}` };
+        }
+      }
       const oldValues = new Map;
+      const callBindScope = new Map;
       for (let i = 0;i < func.params.length; i++) {
         const param = func.params[i];
-        if (this.variables.has(param)) {
-          oldValues.set(param, this.variables.get(param));
-        }
-        this.variables.set(param, argValues[i]);
+        callBindScope.set(param, argValues[i]);
       }
-      const result = this.evaluateExpression(func.body);
-      for (const [param, oldValue] of oldValues) {
-        this.variables.set(param, oldValue);
-      }
-      for (const param of func.params) {
-        if (!oldValues.has(param)) {
-          this.variables.delete(param);
-        }
-      }
+      const result = this.evaluateExpression(func.body, callBindScope);
       return result;
     } catch (error) {
       return {
@@ -5776,7 +5891,7 @@ class VariableManager {
         }
       }
       let substitutedFunctions = expression;
-      const functionCallRegex = /(?:^|[^a-zA-Z0-9_@])((?:@?[a-zA-Z][a-zA-Z0-9]*))\s*\(/g;
+      const functionCallRegex = /(?:^|[^a-zA-Z0-9_@])((?:@@[a-zA-Z0-9_]+@)?(?:@?[a-zA-Z][a-zA-Z0-9_]*))\s*\(/g;
       let match;
       while ((match = functionCallRegex.exec(substitutedFunctions)) !== null) {
         const fullMatch = match[0];
@@ -5798,12 +5913,12 @@ class VariableManager {
         }
         if (closeParenIndex !== -1) {
           const argsStr = substitutedFunctions.substring(openParenIndex + 1, closeParenIndex);
-          const normalizedFuncName = funcName.startsWith("@") ? funcName.substring(1) : funcName;
+          const normalizedFuncName = funcName.startsWith("@@") ? funcName : funcName.startsWith("@") ? funcName.substring(1) : funcName;
           let funcDef = this.functions.get(normalizedFuncName);
           if (!funcDef && localScope.has(normalizedFuncName)) {
             const possibleAlias = localScope.get(normalizedFuncName);
             if (typeof possibleAlias === "string") {
-              const aliasNorm = possibleAlias.startsWith("@") ? possibleAlias.substring(1) : possibleAlias;
+              const aliasNorm = possibleAlias.startsWith("@@") ? possibleAlias : possibleAlias.startsWith("@") ? possibleAlias.substring(1) : possibleAlias;
               if (this.functions.has(aliasNorm)) {
                 funcDef = this.functions.get(aliasNorm);
               }
@@ -5833,10 +5948,43 @@ class VariableManager {
             }
             const callBindScope = new Map;
             for (let i = 0;i < funcDef.params.length; i++) {
-              const argResult = this.evaluateExpression(args[i], localScope);
+              const paramName = funcDef.params[i];
+              const argRaw = args[i];
+              const isParamFunction = /^[A-Z]/.test(paramName);
+              const lambdaMatch = argRaw.match(/^([a-zA-Z][a-zA-Z0-9_]*)\s*->\s*(.+)$/);
+              if (lambdaMatch) {
+                if (!isParamFunction) {
+                  throw new Error(`Argument mismatch for '${paramName}': Expected value, got Lambda function.`);
+                }
+                const [, lambdaParam, lambdaBody] = lambdaMatch;
+                const anonName = `@@Anon@${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+                this.functions.set(anonName, {
+                  params: [lambdaParam.trim()],
+                  body: lambdaBody.trim(),
+                  type: "def",
+                  doc: "Anonymous Lambda"
+                });
+                callBindScope.set(paramName, anonName);
+                continue;
+              }
+              if (isParamFunction) {
+                const trimmed = argRaw.trim();
+                if (/^(?:@@[a-zA-Z0-9_]+@)?@?[a-zA-Z0-9_]+$/.test(trimmed)) {
+                  const norm = trimmed.startsWith("@@") ? trimmed : trimmed.startsWith("@") ? trimmed.substring(1) : trimmed;
+                  if (this.functions.has(norm)) {
+                    callBindScope.set(paramName, norm);
+                    continue;
+                  } else {
+                    throw new Error(`Argument mismatch for '${paramName}': Expected existing function, got unknown '${trimmed}'`);
+                  }
+                } else {
+                  throw new Error(`Argument mismatch for '${paramName}': Expected function name or lambda, got expression.`);
+                }
+              }
+              const argResult = this.evaluateExpression(argRaw, localScope);
               if (argResult.type === "error")
                 throw new Error(argResult.message);
-              callBindScope.set(funcDef.params[i], argResult.result);
+              callBindScope.set(paramName, argResult.result);
             }
             const bodyResult = this.evaluateExpression(funcDef.body, callBindScope);
             if (bodyResult.type === "error")
@@ -5850,33 +5998,37 @@ class VariableManager {
       }
       let substituted = substitutedFunctions;
       const allVars = new Map([...this.variables, ...localScope]);
-      substituted = substituted.replace(/(^|[^a-zA-Z0-9])(@?)([a-zA-Z][a-zA-Z0-9]*)/g, (match2, prefixChar, atSign, name) => {
-        const normalizedName = name;
-        const isVar = allVars.has(normalizedName);
-        const isFunc = this.functions.has(normalizedName);
+      substituted = substituted.replace(/(^|[^a-zA-Z0-9_@])((?:@@[a-zA-Z0-9_]+@)?)(@?)([a-zA-Z][a-zA-Z0-9_]*)/g, (match2, prefixChar, namespaceInfo, atSign, name) => {
+        const fullIdentifier = `${namespaceInfo}${name}`;
+        const isVar = allVars.has(fullIdentifier);
+        const isFunc = this.functions.has(fullIdentifier);
         const hasPrefix = atSign === "@";
         if (!isVar && !isFunc) {
           return match2;
         }
         let valStr;
         if (isVar) {
-          const value = allVars.get(normalizedName);
+          const value = allVars.get(fullIdentifier);
           valStr = this.formatValueWithPrefix(value);
         } else if (isFunc) {
           let isDigit2 = false;
           if (this.inputBase) {
             const validChars = this.inputBase.base > 10 ? this.inputBase.characters.concat(this.inputBase.characters.filter((c) => /[a-z]/.test(c)).map((c) => c.toUpperCase())) : this.inputBase.characters;
-            isDigit2 = [...name].every((c) => validChars.includes(c));
+            if (!namespaceInfo) {
+              isDigit2 = [...name].every((c) => validChars.includes(c));
+            }
           }
           if (isDigit2 && !hasPrefix) {
             throw new Error(`Ambiguous reference '${name}'. Use @${name} for function or explicit base prefix (e.g. 0D${name} or 0x${name}) for number.`);
           }
-          valStr = normalizedName;
+          valStr = fullIdentifier;
         }
         let isDigit = false;
         if (this.inputBase) {
           const validChars = this.inputBase.base > 10 ? this.inputBase.characters.concat(this.inputBase.characters.filter((c) => /[a-z]/.test(c)).map((c) => c.toUpperCase())) : this.inputBase.characters;
-          isDigit = [...name].every((c) => validChars.includes(c));
+          if (!namespaceInfo) {
+            isDigit = [...name].every((c) => validChars.includes(c));
+          }
         }
         if (hasPrefix) {
           if (isFunc)
@@ -7039,6 +7191,10 @@ class WebCalculator {
     this.initializeElements();
     this.setupEventListeners();
     this.displayWelcome();
+    this.initializeElements();
+    this.setupEventListeners();
+    this.displayWelcome();
+    this.loadModulesFromUrl();
   }
   initializeElements() {
     this.inputElement = document.getElementById("calculatorInput");
@@ -7198,6 +7354,27 @@ class WebCalculator {
       this.showHelp();
       this.inputElement.value = "";
       this.currentEntry = null;
+      return;
+    }
+    if (upperInput.startsWith("HELP ")) {
+      const topic = input.substring(5).trim();
+      const helpText = this.variableManager.getHelp(topic);
+      this.addToOutput(input, helpText, false);
+      this.finishEntry(helpText);
+      this.inputElement.value = "";
+      return;
+    }
+    if (upperInput.startsWith("LOAD ")) {
+      const url = input.substring(5).trim();
+      this.addToOutput(input, `Loading module from ${url}...`, false);
+      this.handleLoadCommand(url).then((msg) => {
+        this.addToOutput("", msg, false);
+        this.finishEntry(msg);
+      }).catch((err) => {
+        this.addToOutput("", `Error loading module: ${err.message}`, true);
+        this.finishEntry(`Error: ${err.message}`);
+      });
+      this.inputElement.value = "";
       return;
     }
     if (upperInput === "CLEAR") {
@@ -7586,6 +7763,71 @@ class WebCalculator {
         }
       default:
         return `${lowFraction}:${highFraction}${baseRepresentation}`;
+    }
+  }
+  loadModulesFromUrl() {
+    if (typeof window === "undefined")
+      return;
+    const params = new URLSearchParams(window.location.search);
+    const loadParam = params.get("load");
+    if (loadParam) {
+      const urls = loadParam.split(",");
+      for (const url of urls) {
+        if (url.trim()) {
+          this.handleLoadCommand(url.trim()).then((msg) => this.addToOutput("", msg, false)).catch((e) => this.addToOutput("", `Auto-load error: ${e.message}`, true));
+        }
+      }
+    }
+  }
+  async handleLoadCommand(inputUrl) {
+    try {
+      let url = inputUrl;
+      let moduleName = "";
+      if (inputUrl.startsWith("@@")) {
+        const name = inputUrl.substring(2).replace(/@$/, "");
+        moduleName = name;
+        url = `${name}.rat`;
+      } else {
+        const basename = url.split(/[/\\]/).pop().split(/[?#]/)[0].split(".")[0];
+        moduleName = basename.charAt(0).toUpperCase() + basename.slice(1);
+      }
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch ${url} (Status ${response.status})`);
+      }
+      const content = await response.text();
+      if (url.endsWith(".js")) {
+        try {
+          const mod = await import(url);
+          const scope = mod.default || mod;
+          if (!scope.functions && !scope.variables) {
+            return `Warning: JS Module '${moduleName}' does not seem to export 'functions' or 'variables'.`;
+          }
+          return this.variableManager.loadModule(moduleName, scope);
+        } catch (e) {
+          throw new Error(`JS Import failed: ${e.message}. Note: WebCalc supports .rat scripts best.`);
+        }
+      } else {
+        const tempVM = new VariableManager;
+        tempVM.setCustomBases(this.customBases);
+        tempVM.setInputBase(this.inputBase);
+        const lines = content.split(`
+`);
+        for (const line of lines) {
+          if (!line.trim() || line.trim().startsWith("#") || line.trim().startsWith("//"))
+            continue;
+          try {
+            tempVM.processInput(line);
+          } catch (e) {}
+        }
+        const modScope = {
+          functions: Object.fromEntries(tempVM.getFunctions()),
+          variables: Object.fromEntries(tempVM.getVariables())
+        };
+        return this.variableManager.loadModule(moduleName, modScope);
+      }
+    } catch (error) {
+      throw error;
     }
   }
   addToOutput(input = null, output = null, isError = false, result = null, expression = null) {
@@ -8134,7 +8376,7 @@ class WebCalculator {
         output = `Current base: ${this.inputBase.name} (base ${this.inputBase.base})`;
       } else {
         output = `Input base: ${this.inputBase.name} (base ${this.inputBase.base})
-` + `Output base${this.outputBases.length > 1 ? "s" : ""}: ${this.outputBases.map((b) => `${b.name} (base ${b.base})`).join(", ")}`;
+Output base${this.outputBases.length > 1 ? "s" : ""}: ${this.outputBases.map((b) => `${b.name} (base ${b.base})`).join(", ")}`;
       }
       this.addToOutput("", output, false);
       this.finishEntry(output);
@@ -8200,7 +8442,7 @@ class WebCalculator {
     }
     const outputBaseNames = this.outputBases.map((b) => `${b.name} (base ${b.base})`).join(", ");
     const output = `Input base: ${this.inputBase.name} (base ${this.inputBase.base})
-` + `Output base${this.outputBases.length > 1 ? "s" : ""}: ${outputBaseNames}`;
+Output base${this.outputBases.length > 1 ? "s" : ""}: ${outputBaseNames}`;
     this.addToOutput("", output, false);
     this.finishEntry(output);
   }
@@ -8424,6 +8666,71 @@ Standard bases:
     } catch (e) {
       console.error("Failed to parse value:", expr, e);
       return null;
+    }
+  }
+  loadModulesFromUrl() {
+    if (typeof window === "undefined" || !window.location)
+      return;
+    const params = new URLSearchParams(window.location.search);
+    const loadParam = params.get("load");
+    if (loadParam) {
+      const urls = loadParam.split(",");
+      for (const url of urls) {
+        if (url.trim()) {
+          this.handleLoadCommand(url.trim()).then((msg) => this.addToOutput("", msg, false)).catch((e) => this.addToOutput("", `Auto-load error: ${e.message}`, true));
+        }
+      }
+    }
+  }
+  async handleLoadCommand(inputUrl) {
+    try {
+      let url = inputUrl;
+      let moduleName = "";
+      if (inputUrl.startsWith("@@")) {
+        const name = inputUrl.substring(2).replace(/@$/, "");
+        moduleName = name;
+        url = `${name}.rat`;
+      } else {
+        const basename = url.split(/[/\]/).pop().split(/[?#]/)[0].split(".")[0];
+        moduleName = basename.charAt(0).toUpperCase() + basename.slice(1);
+      }
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch ${url} (Status ${response.status})`);
+      }
+      const content = await response.text();
+      if (url.endsWith(".js")) {
+        try {
+          const mod = await import(url);
+          const scope = mod.default || mod;
+          if (!scope.functions && !scope.variables) {
+            return `Warning: JS Module '${moduleName}' does not seem to export 'functions' or 'variables'.`;
+          }
+          return this.variableManager.loadModule(moduleName, scope);
+        } catch (e) {
+          throw new Error(`JS Import failed: ${e.message}. Note: WebCalc supports .rat scripts best.`);
+        }
+      } else {
+        const tempVM = new VariableManager;
+        tempVM.setCustomBases(this.customBases);
+        tempVM.setInputBase(this.inputBase);
+        const lines = content.split(`
+`);
+        for (const line of lines) {
+          if (!line.trim() || line.trim().startsWith("#") || line.trim().startsWith("//"))
+            continue;
+          try {
+            tempVM.processInput(line);
+          } catch (e) {}
+        }
+        const modScope = {
+          functions: Object.fromEntries(tempVM.getFunctions()),
+          variables: Object.fromEntries(tempVM.getVariables())
+        };
+        return this.variableManager.loadModule(moduleName, modScope);
+      }
+    } catch (error) {
+      throw error;
     }
   }
 }

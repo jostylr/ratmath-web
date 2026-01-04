@@ -34,6 +34,12 @@ class WebCalculator {
     this.initializeElements();
     this.setupEventListeners();
     this.displayWelcome();
+    this.initializeElements();
+    this.setupEventListeners();
+    this.displayWelcome();
+
+    // Auto-load modules from URL query string ?load=url1,url2
+    this.loadModulesFromUrl();
   }
 
   initializeElements() {
@@ -247,6 +253,29 @@ class WebCalculator {
       this.showHelp();
       this.inputElement.value = "";
       this.currentEntry = null; // Don't track help command
+      return;
+    }
+
+    if (upperInput.startsWith("HELP ")) {
+      const topic = input.substring(5).trim();
+      const helpText = this.variableManager.getHelp(topic);
+      this.addToOutput(input, helpText, false);
+      this.finishEntry(helpText);
+      this.inputElement.value = "";
+      return;
+    }
+
+    if (upperInput.startsWith("LOAD ")) {
+      const url = input.substring(5).trim();
+      this.addToOutput(input, `Loading module from ${url}...`, false);
+      this.handleLoadCommand(url).then(msg => {
+        this.addToOutput("", msg, false);
+        this.finishEntry(msg);
+      }).catch(err => {
+        this.addToOutput("", `Error loading module: ${err.message}`, true);
+        this.finishEntry(`Error: ${err.message}`);
+      });
+      this.inputElement.value = "";
       return;
     }
 
@@ -752,6 +781,91 @@ class WebCalculator {
         }
       default:
         return `${lowFraction}:${highFraction}${baseRepresentation}`;
+    }
+  }
+
+  loadModulesFromUrl() {
+    if (typeof window === 'undefined') return;
+
+    const params = new URLSearchParams(window.location.search);
+    const loadParam = params.get('load');
+    if (loadParam) {
+      const urls = loadParam.split(',');
+      for (const url of urls) {
+        if (url.trim()) {
+          this.handleLoadCommand(url.trim())
+            .then(msg => this.addToOutput("", msg, false))
+            .catch(e => this.addToOutput("", `Auto-load error: ${e.message}`, true));
+        }
+      }
+    }
+  }
+
+  async handleLoadCommand(inputUrl) {
+    try {
+      let url = inputUrl;
+      let moduleName = "";
+
+      if (inputUrl.startsWith("@@")) {
+        // Defined convention: @@Module -> /modules/Module.rat (or similar)
+        // For now, let's assume relative path check
+        const name = inputUrl.substring(2).replace(/@$/, "");
+        moduleName = name;
+        url = `${name}.rat`; // Default assumption for web: try fetching .rat file relative
+      } else {
+        const basename = url.split(/[/\\]/).pop().split(/[?#]/)[0].split('.')[0];
+        moduleName = basename.charAt(0).toUpperCase() + basename.slice(1);
+      }
+
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch ${url} (Status ${response.status})`);
+      }
+
+      const content = await response.text();
+
+      // We can reuse manual parsing logic, logic similar to CLI
+      // But here we might want to be safer or strictly assume .rat script format
+      // If .js, we can't easily dynamic import(url) cross-origin or even same-origin easily without module setup.
+      // Restrict Web Load to .rat scripts for now unless it ends in .js and we try shim?
+      // Let's support .rat scripts primarily.
+
+      if (url.endsWith(".js")) {
+        // Dynamic import for web? 
+        // import(url) works in modern browsers for modules.
+        try {
+          const mod = await import(url);
+          const scope = mod.default || mod;
+          if (!scope.functions && !scope.variables) {
+            return `Warning: JS Module '${moduleName}' does not seem to export 'functions' or 'variables'.`;
+          }
+          return this.variableManager.loadModule(moduleName, scope);
+        } catch (e) {
+          throw new Error(`JS Import failed: ${e.message}. Note: WebCalc supports .rat scripts best.`);
+        }
+      } else {
+        // Rat Script
+        const tempVM = new VariableManager();
+        tempVM.setCustomBases(this.customBases);
+        tempVM.setInputBase(this.inputBase);
+
+        const lines = content.split('\n');
+        for (const line of lines) {
+          if (!line.trim() || line.trim().startsWith("#") || line.trim().startsWith("//")) continue;
+          try {
+            tempVM.processInput(line);
+          } catch (e) { }
+        }
+
+        const modScope = {
+          functions: Object.fromEntries(tempVM.getFunctions()),
+          variables: Object.fromEntries(tempVM.getVariables())
+        };
+        return this.variableManager.loadModule(moduleName, modScope);
+      }
+
+    } catch (error) {
+      throw error; // Propagate to caller
     }
   }
 
@@ -1820,6 +1934,91 @@ class WebCalculator {
     } catch (e) {
       console.error("Failed to parse value:", expr, e);
       return null;
+    }
+  }
+
+  loadModulesFromUrl() {
+    if (typeof window === 'undefined' || !window.location) return;
+
+    const params = new URLSearchParams(window.location.search);
+    const loadParam = params.get('load');
+    if (loadParam) {
+      const urls = loadParam.split(',');
+      for (const url of urls) {
+        if (url.trim()) {
+          this.handleLoadCommand(url.trim())
+            .then(msg => this.addToOutput("", msg, false))
+            .catch(e => this.addToOutput("", `Auto-load error: ${e.message}`, true));
+        }
+      }
+    }
+  }
+
+  async handleLoadCommand(inputUrl) {
+    try {
+      let url = inputUrl;
+      let moduleName = "";
+
+      if (inputUrl.startsWith("@@")) {
+        // Defined convention: @@Module -> /modules/Module.rat (or similar)
+        // For now, let's assume relative path check
+        const name = inputUrl.substring(2).replace(/@$/, "");
+        moduleName = name;
+        url = `${name}.rat`; // Default assumption for web: try fetching .rat file relative
+      } else {
+        const basename = url.split(/[/\]/).pop().split(/[?#]/)[0].split('.')[0];
+        moduleName = basename.charAt(0).toUpperCase() + basename.slice(1);
+      }
+
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch ${url} (Status ${response.status})`);
+      }
+
+      const content = await response.text();
+
+      // We can reuse manual parsing logic, logic similar to CLI
+      // But here we might want to be safer or strictly assume .rat script format
+      // If .js, we can't easily dynamic import(url) cross-origin or even same-origin easily without module setup.
+      // Restrict Web Load to .rat scripts for now unless it ends in .js and we try shim?
+      // Let's support .rat scripts primarily.
+
+      if (url.endsWith(".js")) {
+        // Dynamic import for web? 
+        // import(url) works in modern browsers for modules.
+        try {
+          const mod = await import(url);
+          const scope = mod.default || mod;
+          if (!scope.functions && !scope.variables) {
+            return `Warning: JS Module '${moduleName}' does not seem to export 'functions' or 'variables'.`;
+          }
+          return this.variableManager.loadModule(moduleName, scope);
+        } catch (e) {
+          throw new Error(`JS Import failed: ${e.message}. Note: WebCalc supports .rat scripts best.`);
+        }
+      } else {
+        // Rat Script
+        const tempVM = new VariableManager();
+        tempVM.setCustomBases(this.customBases);
+        tempVM.setInputBase(this.inputBase);
+
+        const lines = content.split('\n');
+        for (const line of lines) {
+          if (!line.trim() || line.trim().startsWith("#") || line.trim().startsWith("//")) continue;
+          try {
+            tempVM.processInput(line);
+          } catch (e) { }
+        }
+
+        const modScope = {
+          functions: Object.fromEntries(tempVM.getFunctions()),
+          variables: Object.fromEntries(tempVM.getVariables())
+        };
+        return this.variableManager.loadModule(moduleName, modScope);
+      }
+
+    } catch (error) {
+      throw error; // Propagate to caller
     }
   }
 }
