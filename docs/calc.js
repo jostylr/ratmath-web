@@ -3478,6 +3478,9 @@ function parseBaseNotation(numberStr, baseSystem, options = {}) {
       numberStr = numberStr.substring(2);
     } else if (prefix === "D") {
       numberStr = numberStr.substring(2);
+    } else if (prefix === "d") {
+      baseSystem = BaseSystem.DECIMAL;
+      numberStr = numberStr.substring(2);
     } else {
       if (prefix.toLowerCase() !== "e") {
         throw new Error(`Invalid or unregistered prefix '0${prefix}'`);
@@ -5375,7 +5378,7 @@ class VariableManager {
     this.modules = new Map;
     this.inputBase = null;
     this.customBases = new Map;
-    this.variablePattern = /^(?:@@[a-zA-Z0-9_]+@)?(?:@?([a-z][a-zA-Z0-9_]*))$/;
+    this.variablePattern = /^(?:@@[a-zA-Z0-9_]+@)?(?:@?([_a-z][a-zA-Z0-9_]*))$/;
     this.functionPattern = /^(?:@@[a-zA-Z0-9_]+@)?(?:@?([A-Z][a-zA-Z0-9_]*))$/;
   }
   setVariable(name, value) {
@@ -5383,19 +5386,19 @@ class VariableManager {
       if (this.functionPattern.test(name)) {
         throw new Error(`Invalid variable name '${name}'. Function names (starting with Uppercase) cannot be assigned values directly. Use '${name}(...) -> ...' to define a function.`);
       }
-      throw new Error(`Invalid variable name '${name}'. Variables must start with a lowercase letter or @lowercase.`);
+      throw new Error(`Invalid variable name '${name}'. Variables must start with a lowercase letter, underscore, or @lowercase/@underscore.`);
     }
     const normalizedName = name.startsWith("@") ? name.substring(1) : name;
     this.variables.set(normalizedName, value);
   }
-  defineFunction(name, params, body, doc = "") {
+  defineFunction(name, params, body, doc = "", defaults = {}) {
     if (!this.functionPattern.test(name)) {
       if (this.variablePattern.test(name)) {
         throw new Error(`Invalid function name '${name}'. Function definitions must use names starting with an Uppercase letter or @Uppercase.`);
       }
       throw new Error(`Invalid function name '${name}'. Functions must start with an Uppercase letter or @Uppercase.`);
     }
-    this.functions.set(name, { params, body, doc, type: "def" });
+    this.functions.set(name, { params, body, doc, type: "def", defaults });
   }
   registerJSFunction(name, handler, params, doc = "") {
     if (!this.functionPattern.test(name)) {
@@ -5543,19 +5546,47 @@ ${entries.join(`
   processInput(input) {
     try {
       const trimmed = input.trim();
-      const funcDefMatch = trimmed.match(/^(@?[a-zA-Z][a-zA-Z0-9]*)\s*\(([^)]*)\)\s*->\s*(.+)$/);
+      const funcDefMatch = trimmed.match(/^(@?[_a-zA-Z][a-zA-Z0-9_]*)\s*\(([^)]*)\)\s*->\s*(.+)$/);
       if (funcDefMatch) {
         const [, funcName, paramStr, body] = funcDefMatch;
-        const params = paramStr.split(",").map((p) => p.trim()).filter((p) => p);
-        return this.handleFunctionDefinition(funcName, params, body);
+        const rawParams = paramStr.split(",").map((p) => p.trim()).filter((p) => p);
+        const params = [];
+        const defaults = {};
+        for (const p of rawParams) {
+          if (p.includes("?")) {
+            const [pName, pDef] = p.split("?").map((s) => s.trim());
+            if (!pName)
+              throw new Error("Invalid parameter syntax: " + p);
+            params.push(pName + "?");
+            if (pDef)
+              defaults[pName] = pDef;
+          } else {
+            params.push(p);
+          }
+        }
+        return this.handleFunctionDefinition(funcName, params, body, undefined, defaults);
       }
-      const arrowAssignMatch = trimmed.match(/^(@?[a-zA-Z][a-zA-Z0-9]*)\s*=\s*(?:(?:\(([^)]*)\))|([a-zA-Z][a-zA-Z0-9]*))\s*->\s*(.+)$/);
+      const arrowAssignMatch = trimmed.match(/^(@?[_a-zA-Z][a-zA-Z0-9_]*)\s*=\s*(?:(?:\(([^)]*)\))|([_a-zA-Z][a-zA-Z0-9_]*))\s*->\s*(.+)$/);
       if (arrowAssignMatch) {
         const [, name, paramsInParens, singleParam, body] = arrowAssignMatch;
-        const params = (paramsInParens !== undefined ? paramsInParens : singleParam).split(",").map((p) => p.trim()).filter((p) => p);
-        return this.handleFunctionDefinition(name, params, body);
+        const rawParams = (paramsInParens !== undefined ? paramsInParens : singleParam).split(",").map((p) => p.trim()).filter((p) => p);
+        const params = [];
+        const defaults = {};
+        for (const p of rawParams) {
+          if (p.includes("?")) {
+            const [pName, pDef] = p.split("?").map((s) => s.trim());
+            if (!pName)
+              throw new Error("Invalid parameter syntax: " + p);
+            params.push(pName + "?");
+            if (pDef)
+              defaults[pName] = pDef;
+          } else {
+            params.push(p);
+          }
+        }
+        return this.handleFunctionDefinition(name, params, body, undefined, defaults);
       }
-      const assignmentMatch = trimmed.match(/^(@?[a-zA-Z][a-zA-Z0-9]*)\s*=\s*(.+)$/);
+      const assignmentMatch = trimmed.match(/^(@?[_a-zA-Z][a-zA-Z0-9_]*)\s*=\s*(.+)$/);
       if (assignmentMatch) {
         const [, varName, expression] = assignmentMatch;
         return this.handleAssignment(varName, expression);
@@ -5645,20 +5676,37 @@ ${entries.join(`
       };
     }
   }
-  handleFunctionDefinition(funcName, params, body) {
+  handleFunctionDefinition(funcName, params, body, doc, defaults = {}) {
     if (params.length === 0) {}
     if (new Set(params).size !== params.length) {
       return { type: "error", message: "Duplicate parameter names" };
     }
+    const paramSet = new Set;
     for (const param of params) {
-      if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(param)) {
+      const clean = param.replace(/\?$/, "");
+      if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(clean)) {
         return {
           type: "error",
           message: `Invalid parameter name '${param}'. Must start with letter.`
         };
       }
+      paramSet.add(clean);
+      try {
+        const res = this.evaluateExpression(clean, new Map);
+        if (res.type !== "error" && res.result !== undefined) {
+          return {
+            type: "error",
+            message: `Ambiguous parameter '${clean}'. It is a valid number in the current base (${this.inputBase}).`
+          };
+        }
+      } catch (e) {}
     }
-    this.functions.set(funcName, { params, body, type: "def", doc: `User defined function: ${body}` });
+    const staticBody = this.freezeExpression(body, paramSet);
+    const staticDefaults = {};
+    for (const [key, val] of Object.entries(defaults)) {
+      staticDefaults[key] = this.freezeExpression(val, paramSet);
+    }
+    this.functions.set(funcName, { params, body: staticBody, type: "def", doc: doc || `User defined function: ${body}`, defaults: staticDefaults });
     return {
       type: "function",
       result: null,
@@ -5684,31 +5732,50 @@ ${entries.join(`
       else if (char === ")" || char === "]" || char === "}")
         depth--;
       if (char === "," && depth === 0) {
-        args.push(currentArg.trim());
+        const trimmed = currentArg.trim();
+        args.push(trimmed === "" ? undefined : trimmed);
         currentArg = "";
       } else {
         currentArg += char;
       }
     }
-    if (currentArg.trim() !== "")
-      args.push(currentArg.trim());
-    if (args.length !== func.params.length) {
+    const lastTrimmed = currentArg.trim();
+    if (lastTrimmed !== "") {
+      args.push(lastTrimmed);
+    }
+    const minArgs = func.params.filter((p) => !p.endsWith("?")).length;
+    const maxArgs = func.params.length;
+    if (args.length > maxArgs) {
       return {
         type: "error",
-        message: `Function ${funcName} expects ${func.params.length} arguments, got ${args.length}`
+        message: `Function ${funcName} expects at most ${maxArgs} arguments, got ${args.length}`
       };
     }
     try {
       const argValues = [];
-      for (let i = 0;i < args.length; i++) {
-        const argRaw = args[i];
+      for (let i = 0;i < maxArgs; i++) {
+        let argRaw = args[i];
         const paramName = func.params[i];
-        const isParamFunction = /^[A-Z]/.test(paramName);
-        const isParamValue = /^[a-z]/.test(paramName);
+        const cleanParamName = paramName.replace(/\?$/, "");
+        if (argRaw === undefined) {
+          if (func.defaults && func.defaults[cleanParamName] !== undefined) {
+            argRaw = func.defaults[cleanParamName];
+          } else if (paramName.endsWith("?")) {
+            argRaw = undefined;
+          } else {
+            throw new Error(`Missing required argument '${cleanParamName}'`);
+          }
+        }
+        if (argRaw === undefined) {
+          argValues.push(undefined);
+          continue;
+        }
+        const isParamFunction = /^[A-Z]/.test(cleanParamName);
+        const isParamValue = /^[a-z]/.test(cleanParamName);
         const lambdaMatch = argRaw.match(/^([a-zA-Z][a-zA-Z0-9_]*)\s*->\s*(.+)$/);
         if (lambdaMatch) {
           if (!isParamFunction) {
-            throw new Error(`Argument mismatch for '${paramName}': Expected value (compatible with lowercase), got Lambda function.`);
+            throw new Error(`Argument mismatch for '${cleanParamName}': Expected value (compatible with lowercase), got Lambda function.`);
           }
           const [, lambdaParam, lambdaBody] = lambdaMatch;
           const anonName = `@@Anon@${Date.now()}_${Math.floor(Math.random() * 1000)}`;
@@ -5729,20 +5796,21 @@ ${entries.join(`
               argValues.push(norm);
               continue;
             } else {
-              throw new Error(`Argument mismatch for '${paramName}': Expected existing function, got unknown '${trimmed}'`);
+              throw new Error(`Argument mismatch for '${cleanParamName}': Expected existing function, got unknown '${trimmed}'`);
             }
           } else {
-            throw new Error(`Argument mismatch for '${paramName}': Expected function name or lambda, got expression.`);
+            throw new Error(`Argument mismatch for '${cleanParamName}': Expected function name or lambda, got expression.`);
           }
         }
         const result2 = this.evaluateExpression(argRaw);
-        if (result2.type === "error")
+        if (result2.type === "error") {
           return result2;
+        }
         argValues.push(result2.result);
       }
       if (func.type === "js") {
         try {
-          const res = func.handler(...argValues);
+          const res = func.handler.call(this, ...argValues);
           return { type: "expression", result: res };
         } catch (e) {
           return { type: "error", message: `JS Function ${funcName} error: ${e.message}` };
@@ -5752,7 +5820,8 @@ ${entries.join(`
       const callBindScope = new Map;
       for (let i = 0;i < func.params.length; i++) {
         const param = func.params[i];
-        callBindScope.set(param, argValues[i]);
+        const cleanParam = param.replace(/\?$/, "");
+        callBindScope.set(cleanParam, argValues[i]);
       }
       const result = this.evaluateExpression(func.body, callBindScope);
       return result;
@@ -5891,7 +5960,7 @@ ${entries.join(`
         }
       }
       let substitutedFunctions = expression;
-      const functionCallRegex = /(?:^|[^a-zA-Z0-9_@])((?:@@[a-zA-Z0-9_]+@)?(?:@?[a-zA-Z][a-zA-Z0-9_]*))\s*\(/g;
+      const functionCallRegex = /(?:^|[^a-zA-Z0-9_@])((?:@@[a-zA-Z0-9_]+@)?(?:@?[_a-zA-Z][a-zA-Z0-9_]*))\s*\(/g;
       let match;
       while ((match = functionCallRegex.exec(substitutedFunctions)) !== null) {
         const fullMatch = match[0];
@@ -5943,13 +6012,31 @@ ${entries.join(`
             }
             if (currentArg.trim() !== "")
               args.push(currentArg.trim());
-            if (args.length !== funcDef.params.length) {
-              throw new Error(`Function '${funcName}' expects ${funcDef.params.length} arguments, got ${args.length}`);
+            let minArgs = 0;
+            const maxArgs = funcDef.params.length;
+            for (const p of funcDef.params) {
+              if (!p.endsWith("?") && (!funcDef.defaults || funcDef.defaults[p] === undefined)) {
+                minArgs++;
+              }
+            }
+            if (args.length < minArgs || args.length > maxArgs) {
+              throw new Error(`Function '${funcName}' expects ${minArgs}-${maxArgs} arguments, got ${args.length}`);
             }
             const callBindScope = new Map;
             for (let i = 0;i < funcDef.params.length; i++) {
-              const paramName = funcDef.params[i];
-              const argRaw = args[i];
+              const rawParamName = funcDef.params[i];
+              const isOptional = rawParamName.endsWith("?");
+              const paramName = isOptional ? rawParamName.slice(0, -1) : rawParamName;
+              let argRaw = args[i];
+              if (argRaw === undefined || argRaw === "") {
+                if (funcDef.defaults && funcDef.defaults[paramName] !== undefined) {
+                  argRaw = funcDef.defaults[paramName];
+                } else if (isOptional) {
+                  continue;
+                } else {
+                  throw new Error(`Missing required argument '${paramName}'`);
+                }
+              }
               const isParamFunction = /^[A-Z]/.test(paramName);
               const lambdaMatch = argRaw.match(/^([a-zA-Z][a-zA-Z0-9_]*)\s*->\s*(.+)$/);
               if (lambdaMatch) {
@@ -5998,7 +6085,7 @@ ${entries.join(`
       }
       let substituted = substitutedFunctions;
       const allVars = new Map([...this.variables, ...localScope]);
-      substituted = substituted.replace(/(^|[^a-zA-Z0-9_@])((?:@@[a-zA-Z0-9_]+@)?)(@?)([a-zA-Z][a-zA-Z0-9_]*)/g, (match2, prefixChar, namespaceInfo, atSign, name) => {
+      substituted = substituted.replace(/(^|[^a-zA-Z0-9_@])((?:@@[a-zA-Z0-9_]+@)?)(@?)([_a-zA-Z][a-zA-Z0-9_]*)/g, (match2, prefixChar, namespaceInfo, atSign, name) => {
         const fullIdentifier = `${namespaceInfo}${name}`;
         const isVar = allVars.has(fullIdentifier);
         const isFunc = this.functions.has(fullIdentifier);
@@ -6060,9 +6147,9 @@ ${entries.join(`
         });
       } catch (parseError) {
         const trimmed = preprocessed.trim();
-        const tokens = trimmed.split(/[^a-zA-Z0-9@]/).filter((t) => t.length > 0);
+        const tokens = trimmed.split(/[^a-zA-Z0-9@_]/).filter((t) => t.length > 0);
         for (const token of tokens) {
-          const rawName = token.startsWith("@") ? token.substring(1) : token;
+          const rawName = token.startsWith("@@") ? token : token.startsWith("@") ? token.substring(1) : token;
           if (this.functions.has(rawName)) {
             if (tokens.length > 1 || trimmed.includes("(") || trimmed.includes(")")) {
               throw new Error(`Function '${rawName}' cannot be used as a value in this context`);
@@ -6154,6 +6241,59 @@ ${entries.join(`
   }
   setCustomBases(customBases) {
     this.customBases = customBases;
+  }
+  freezeExpression(expression, paramSet) {
+    let staticExpr = expression;
+    const varRegex = /(?:^|[^a-zA-Z0-9_@])((?:@@[a-zA-Z0-9_]+@)?(?:@?[_a-zA-Z][a-zA-Z0-9_]*))/g;
+    staticExpr = staticExpr.replace(varRegex, (fullMatch, identifier, offset, string) => {
+      const prefix = fullMatch.substring(0, fullMatch.indexOf(identifier));
+      const norm = identifier.replace(/^@/, "");
+      if (paramSet.has(norm)) {
+        return prefix + "@" + norm;
+      }
+      if (norm.startsWith("_"))
+        return fullMatch;
+      if (this.functions.has(norm)) {
+        if (norm.startsWith("_"))
+          return fullMatch;
+        const originalFunc = this.functions.get(norm);
+        if (originalFunc.type === "js")
+          return fullMatch;
+        const timestamp = Date.now().toString(36);
+        const random = Math.random().toString(36).substring(2, 6);
+        const snapshotName = `@@Static@${norm}_${timestamp}${random}`;
+        const snapshotFunc = { ...originalFunc, type: "def", doc: `[Snapshot] ${originalFunc.doc}` };
+        this.functions.set(snapshotName, snapshotFunc);
+        return prefix + snapshotName;
+      }
+      if (this.variables.has(norm)) {
+        const val = this.variables.get(norm);
+        return prefix + this.formatValueWithPrefix(val);
+      }
+      if (!norm.startsWith("_")) {
+        throw new Error(`Undefined variable or function '${norm}' at definition time. Use '_${norm}' for dynamic resolution or define it first.`);
+      }
+      return fullMatch;
+    });
+    const numRegex = /(?:^|[^a-zA-Z0-9_@])(\d+[a-zA-Z0-9.]*|0[dxob][a-zA-Z0-9.]+)/g;
+    staticExpr = staticExpr.replace(numRegex, (fullMatch, numStr, offset, string) => {
+      const prefix = fullMatch.substring(0, fullMatch.indexOf(numStr));
+      try {
+        const evalRes = this.evaluateExpression(numStr, new Map);
+        if (evalRes.type !== "error" && evalRes.result !== undefined) {
+          const val = evalRes.result;
+          const safeStr = this.formatValueWithPrefix(val);
+          const charAfter = string[offset + fullMatch.length];
+          let insertion = safeStr;
+          if (/[a-zA-Z0-9]/.test(charAfter)) {
+            insertion += " ";
+          }
+          return prefix + insertion;
+        }
+      } catch (e) {}
+      return fullMatch;
+    });
+    return staticExpr;
   }
 }
 // src/IntervalVisualization.js

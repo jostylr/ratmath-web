@@ -3141,83 +3141,126 @@ function rationalIntervalPower(base, exponent, precision) {
 }
 
 // ../../packages/reals/src/ratmath-module.js
+function getPrecision(context, prec) {
+  if (prec !== undefined)
+    return prec;
+  if (context && context.variables) {
+    let val;
+    if (context.variables.has("_precision"))
+      val = context.variables.get("_precision");
+    else if (context.variables.has("PRECISION"))
+      val = context.variables.get("PRECISION");
+    if (val !== undefined) {
+      if (val && val.toNumber)
+        return val.toNumber();
+      return val;
+    }
+  }
+  return;
+}
 var functions = {
   PI: {
     type: "js",
-    body: (prec) => PI(prec),
-    params: ["precision"],
-    doc: "Returns PI with optional precision (e.g. 100 for 1/100, or -5 for 10^-5)"
+    body: function(prec) {
+      return PI(getPrecision(this, prec));
+    },
+    params: ["precision?"],
+    doc: "Returns PI with optional precision (default: 10^-6 or env PRECISION)"
   },
   E: {
     type: "js",
-    body: (prec) => E(prec),
-    params: ["precision"],
+    body: function(prec) {
+      return E(getPrecision(this, prec));
+    },
+    params: ["precision?"],
     doc: "Returns e (Euler's number) with optional precision"
   },
   Exp: {
     type: "js",
-    body: (x, prec) => EXP(x, prec),
-    params: ["x", "precision"],
+    body: function(x, prec) {
+      return EXP(x, getPrecision(this, prec));
+    },
+    params: ["x", "precision?"],
     doc: "Computes e^x with optional precision"
   },
   Ln: {
     type: "js",
-    body: (x, prec) => LN(x, prec),
-    params: ["x", "precision"],
+    body: function(x, prec) {
+      return LN(x, getPrecision(this, prec));
+    },
+    params: ["x", "precision?"],
     doc: "Computes natural logarithm of x"
   },
   Log: {
     type: "js",
-    body: (x, base, prec) => LOG(x, base, prec),
-    params: ["x", "base", "precision"],
-    doc: "Computes logarithm of x base b (default 10)"
+    body: function(x, base, prec) {
+      return LOG(x, base, getPrecision(this, prec));
+    },
+    params: ["x", "base", "precision?"],
+    doc: "Computes logarithm of x base b"
   },
   Sin: {
     type: "js",
-    body: (x, prec) => SIN(x, prec),
-    params: ["x", "precision"],
+    body: function(x, prec) {
+      return SIN(x, getPrecision(this, prec));
+    },
+    params: ["x", "precision?"],
     doc: "Computes sine of x (radians)"
   },
   Cos: {
     type: "js",
-    body: (x, prec) => COS(x, prec),
-    params: ["x", "precision"],
+    body: function(x, prec) {
+      return COS(x, getPrecision(this, prec));
+    },
+    params: ["x", "precision?"],
     doc: "Computes cosine of x (radians)"
   },
   Tan: {
     type: "js",
-    body: (x, prec) => TAN(x, prec),
-    params: ["x", "precision"],
+    body: function(x, prec) {
+      return TAN(x, getPrecision(this, prec));
+    },
+    params: ["x", "precision?"],
     doc: "Computes tangent of x (radians)"
   },
   Arcsin: {
     type: "js",
-    body: (x, prec) => ARCSIN(x, prec),
-    params: ["x", "precision"],
+    body: function(x, prec) {
+      return ARCSIN(x, getPrecision(this, prec));
+    },
+    params: ["x", "precision?"],
     doc: "Computes inverse sine of x"
   },
   Arccos: {
     type: "js",
-    body: (x, prec) => ARCCOS(x, prec),
-    params: ["x", "precision"],
+    body: function(x, prec) {
+      return ARCCOS(x, getPrecision(this, prec));
+    },
+    params: ["x", "precision?"],
     doc: "Computes inverse cosine of x"
   },
   Arctan: {
     type: "js",
-    body: (x, prec) => ARCTAN(x, prec),
-    params: ["x", "precision"],
+    body: function(x, prec) {
+      return ARCTAN(x, getPrecision(this, prec));
+    },
+    params: ["x", "precision?"],
     doc: "Computes inverse tangent of x"
   },
   Root: {
     type: "js",
-    body: (q, n, prec) => newtonRoot(q, n, prec),
-    params: ["x", "n", "precision"],
-    doc: "Computes nth root of x using Newton's method"
+    body: function(q, n, prec) {
+      return newtonRoot(q, n, getPrecision(this, prec));
+    },
+    params: ["q", "n", "precision?"],
+    doc: "Computes nth root of q using Newton's method"
   },
   Pow: {
     type: "js",
-    body: (base, exp, prec) => rationalIntervalPower(base, exp, prec),
-    params: ["base", "exponent", "precision"],
+    body: function(base, exp, prec) {
+      return rationalIntervalPower(base, exp, getPrecision(this, prec));
+    },
+    params: ["base", "exponent", "precision?"],
     doc: "Computes base^exponent (supports fractional exponents)"
   }
 };

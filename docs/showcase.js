@@ -3478,6 +3478,9 @@ function parseBaseNotation(numberStr, baseSystem, options = {}) {
       numberStr = numberStr.substring(2);
     } else if (prefix === "D") {
       numberStr = numberStr.substring(2);
+    } else if (prefix === "d") {
+      baseSystem = BaseSystem.DECIMAL;
+      numberStr = numberStr.substring(2);
     } else {
       if (prefix.toLowerCase() !== "e") {
         throw new Error(`Invalid or unregistered prefix '0${prefix}'`);
