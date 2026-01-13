@@ -8,6 +8,7 @@
 import { Rational, RationalInterval, Integer, BaseSystem } from "@ratmath/core";
 import { Parser } from "@ratmath/parser";
 import { VariableManager } from "@ratmath/algebra";
+import { registerStdLib } from "@ratmath/stdlib";
 import { IntervalVisualization, OperationVisualization, MultiStepVisualization } from "./IntervalVisualization.js";
 
 class WebCalculator {
@@ -28,6 +29,10 @@ class WebCalculator {
     this.outputBases = [BaseSystem.DECIMAL]; // Array of base systems for displaying output
     this.customBases = new Map(); // Custom base definitions [n] = character_sequence
     this.variableManager.setCustomBases(this.customBases);
+
+    // Register Standard Library
+    registerStdLib(this.variableManager);
+
     this.currentVisualization = null; // Current visualization instance
     this.lastResult = null; // Store last result for visualization
 
