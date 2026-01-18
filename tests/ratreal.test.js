@@ -2,6 +2,8 @@ import { describe, it, test, expect } from "bun:test";
 import { Rational, RationalInterval } from "@ratmath/core";
 import { PI, E, SIN, COS, ARCSIN, ARCCOS, EXP, LN, LOG, newtonRoot, rationalIntervalPower } from "@ratmath/reals";
 import { Parser } from "@ratmath/parser";
+import { VariableManager } from "@ratmath/algebra";
+import * as RealsModule from "@ratmath/reals/src/ratmath-module.js";
 
 // Test constants
 test("PI constant", () => {
@@ -199,42 +201,55 @@ test("Rational interval power", () => {
   expect(twoToThree.high.toNumber()).toBeCloseTo(8, 4);
 });
 
-// Test Parser integration
-test("Parser integration - constants", () => {
-  const piResult = Parser.parse("PI");
-  expect(piResult).toBeInstanceOf(RationalInterval);
-  expect(piResult.low.toNumber()).toBeCloseTo(3.14159, 4);
+// Test VariableManager integration with reals package loaded
+test("VariableManager integration - constants", () => {
+  const vm = new VariableManager();
+  vm.loadModule("Reals", RealsModule);
+  
+  const piResult = vm.processInput("PI()");
+  expect(piResult.type).toBe("expression");
+  expect(piResult.result).toBeInstanceOf(RationalInterval);
+  expect(piResult.result.low.toNumber()).toBeCloseTo(3.14159, 4);
 
-  const eResult = Parser.parse("EXP");
-  expect(eResult).toBeInstanceOf(RationalInterval);
-  expect(eResult.low.toNumber()).toBeCloseTo(2.71828, 4);
+  const eResult = vm.processInput("E()");
+  expect(eResult.type).toBe("expression");
+  expect(eResult.result).toBeInstanceOf(RationalInterval);
+  expect(eResult.result.low.toNumber()).toBeCloseTo(2.71828, 4);
 });
 
-test("Parser integration - functions", () => {
-  const sinResult = Parser.parse("SIN(0)");
-  expect(sinResult).toBeInstanceOf(RationalInterval);
-  expect(sinResult.low.toNumber()).toBeCloseTo(0, 6);
+test("VariableManager integration - functions", () => {
+  const vm = new VariableManager();
+  vm.loadModule("Reals", RealsModule);
+  
+  const sinResult = vm.processInput("Sin(0)");
+  expect(sinResult.type).toBe("expression");
+  expect(sinResult.result).toBeInstanceOf(RationalInterval);
+  expect(sinResult.result.low.toNumber()).toBeCloseTo(0, 6);
 
-  const expResult = Parser.parse("EXP(1)");
-  expect(expResult).toBeInstanceOf(RationalInterval);
-  expect(expResult.low.toNumber()).toBeCloseTo(2.71828, 4);
+  const expResult = vm.processInput("Exp(1)");
+  expect(expResult.type).toBe("expression");
+  expect(expResult.result).toBeInstanceOf(RationalInterval);
+  expect(expResult.result.low.toNumber()).toBeCloseTo(2.71828, 4);
 
-  const lnResult = Parser.parse("LN(1)");
-  expect(lnResult).toBeInstanceOf(RationalInterval);
-  expect(lnResult.low.toNumber()).toBeCloseTo(0, 6);
+  const lnResult = vm.processInput("Ln(1)");
+  expect(lnResult.type).toBe("expression");
+  expect(lnResult.result).toBeInstanceOf(RationalInterval);
+  expect(lnResult.result.low.toNumber()).toBeCloseTo(0, 6);
 });
 
-test("Parser integration - precision specifications", () => {
-  const piPrecise = Parser.parse("PI[-8]");
-  expect(piPrecise).toBeInstanceOf(RationalInterval);
+test("VariableManager integration - precision as negative exponent", () => {
+  const vm = new VariableManager();
+  vm.loadModule("Reals", RealsModule);
+  
+  // Test with precision as negative exponent (e.g., -8 means 10^-8)
+  const piPrecise = vm.processInput("PI(-8)");
+  expect(piPrecise.type).toBe("expression");
+  expect(piPrecise.result).toBeInstanceOf(RationalInterval);
 
-  const expPrecise = Parser.parse("EXP[-8](1)");
-  expect(expPrecise).toBeInstanceOf(RationalInterval);
-  expect(expPrecise.low.toNumber()).toBeCloseTo(2.71828, 5);
-
-  const sinPrecise = Parser.parse("SIN[-8](0)");
-  expect(sinPrecise).toBeInstanceOf(RationalInterval);
-  expect(sinPrecise.low.toNumber()).toBeCloseTo(0, 7);
+  const expPrecise = vm.processInput("Exp(1, -8)");
+  expect(expPrecise.type).toBe("expression");
+  expect(expPrecise.result).toBeInstanceOf(RationalInterval);
+  expect(expPrecise.result.low.toNumber()).toBeCloseTo(2.71828, 5);
 });
 
 test("Parser integration - fractional exponents", () => {
@@ -249,36 +264,46 @@ test("Parser integration - fractional exponents", () => {
   expect(cbrt8.low.toNumber()).toBeCloseTo(2, 0);
 });
 
-test("Complex expressions", () => {
-  // Test EXP(LN(2)) ≈ 2
-  const expLn2 = Parser.parse("EXP(LN(2))");
-  expect(expLn2).toBeInstanceOf(RationalInterval);
-  expect(expLn2.low.toNumber()).toBeCloseTo(2, 3);
-  expect(expLn2.high.toNumber()).toBeCloseTo(2, 3);
+test("Complex expressions with VariableManager", () => {
+  const vm = new VariableManager();
+  vm.loadModule("Reals", RealsModule);
+  
+  // Test Exp(Ln(2)) ≈ 2
+  const expLn2 = vm.processInput("Exp(Ln(2))");
+  expect(expLn2.type).toBe("expression");
+  expect(expLn2.result).toBeInstanceOf(RationalInterval);
+  expect(expLn2.result.low.toNumber()).toBeCloseTo(2, 3);
+  expect(expLn2.result.high.toNumber()).toBeCloseTo(2, 3);
 
-  // Test SIN(PI/2) ≈ 1
-  const sinPiOver2 = Parser.parse("SIN(PI/2)");
-  expect(sinPiOver2).toBeInstanceOf(RationalInterval);
-  expect(sinPiOver2.low.toNumber()).toBeCloseTo(1, 2);
-  expect(sinPiOver2.high.toNumber()).toBeCloseTo(1, 2);
+  // Test Sin(PI()/2) ≈ 1
+  const sinPiOver2 = vm.processInput("Sin(PI()/2)");
+  expect(sinPiOver2.type).toBe("expression");
+  expect(sinPiOver2.result).toBeInstanceOf(RationalInterval);
+  expect(sinPiOver2.result.low.toNumber()).toBeCloseTo(1, 2);
+  expect(sinPiOver2.result.high.toNumber()).toBeCloseTo(1, 2);
 
-  // Test LOG(EXP(2)) ≈ 2/LN(10)
-  const logExp2 = Parser.parse("LOG(EXP(2))");
-  expect(logExp2).toBeInstanceOf(RationalInterval);
-  expect(logExp2.low.toNumber()).toBeCloseTo(0.86859, 3);
-  expect(logExp2.high.toNumber()).toBeCloseTo(0.86859, 3);
+  // Test Log(Exp(2), 10) ≈ 2/LN(10) - Log requires base argument
+  const logExp2 = vm.processInput("Log(Exp(2), 10)");
+  expect(logExp2.type).toBe("expression");
+  expect(logExp2.result).toBeInstanceOf(RationalInterval);
+  expect(logExp2.result.low.toNumber()).toBeCloseTo(0.86859, 3);
+  expect(logExp2.result.high.toNumber()).toBeCloseTo(0.86859, 3);
 });
 
-test("Error cases", () => {
-  // Domain errors
-  expect(() => Parser.parse("LN(-1)")).toThrow();
-  expect(() => Parser.parse("ARCSIN(2)")).toThrow();
-  expect(() => Parser.parse("ARCCOS(-2)")).toThrow();
+test("Error cases - domain errors", () => {
+  // Domain errors - test directly with functions
+  expect(() => LN(new Rational(-1))).toThrow();
+  expect(() => ARCSIN(new Rational(2))).toThrow();
+  expect(() => ARCCOS(new Rational(-2))).toThrow();
+});
 
-  // Syntax errors
-  expect(() => Parser.parse("SIN")).toThrow();
-  expect(() => Parser.parse("LN")).toThrow();
-  expect(() => Parser.parse("LOG")).toThrow();
+test("Reals functions not available without loading", () => {
+  const vm = new VariableManager();
+  // Don't load reals module
+  
+  // These should fail since reals is not loaded
+  const result = vm.processInput("Sin(0)");
+  expect(result.type).toBe("error");
 });
 
 describe("Continued Fraction Integration", () => {

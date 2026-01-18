@@ -7,9 +7,14 @@
 
 import { Rational, RationalInterval, Integer, BaseSystem } from "@ratmath/core";
 import { Parser } from "@ratmath/parser";
-import { VariableManager } from "@ratmath/algebra";
+import { VariableManager, PackageRegistry, getPackageInfo, resolveDependencies } from "@ratmath/algebra";
 import { registerStdLib } from "@ratmath/stdlib";
 import { IntervalVisualization, OperationVisualization, MultiStepVisualization } from "./IntervalVisualization.js";
+
+// Package module loaders for web - dynamically import bundled packages
+const PackageLoaders = {
+    reals: () => import("@ratmath/reals/src/ratmath-module.js"),
+};
 
 class WebCalculator {
   constructor() {
@@ -806,17 +811,80 @@ class WebCalculator {
     }
   }
 
-  async handleLoadCommand(inputUrl) {
+  async handleLoadCommand(moduleInput) {
+    // Split input to support multiple packages: LOAD reals units
+    const parts = moduleInput.trim().split(/\s+/);
+    const results = [];
+    
+    // Collect packages to load from registry vs file URLs
+    const registryPackages = [];
+    const fileModules = [];
+    
+    for (const part of parts) {
+      // Check if it's a registered package name
+      const pkgInfo = getPackageInfo(part);
+      if (pkgInfo) {
+        registryPackages.push(part.toLowerCase());
+      } else {
+        // Treat as URL/file to fetch
+        fileModules.push(part);
+      }
+    }
+    
+    // Resolve dependencies for registry packages
+    if (registryPackages.length > 0) {
+      const toLoad = resolveDependencies(registryPackages, this.variableManager.getLoadedPackages());
+      
+      for (const pkgName of toLoad) {
+        const result = await this.loadRegistryPackage(pkgName);
+        if (result) results.push(result);
+      }
+    }
+    
+    // Load file-based modules (URLs)
+    for (const fileModule of fileModules) {
+      const result = await this.loadFileModule(fileModule);
+      if (result) results.push(result);
+    }
+    
+    return results.join('\n') || 'No packages loaded.';
+  }
+  
+  async loadRegistryPackage(packageName) {
+    const pkgInfo = getPackageInfo(packageName);
+    if (!pkgInfo) {
+      return `Package '${packageName}' not found in registry.`;
+    }
+    
+    if (this.variableManager.isPackageLoaded(packageName)) {
+      return `Package '${pkgInfo.name}' is already loaded.`;
+    }
+    
+    // Check if we have a loader for this package
+    if (PackageLoaders[packageName]) {
+      try {
+        const mod = await PackageLoaders[packageName]();
+        const scope = mod.default || mod;
+        const result = this.variableManager.loadModule(pkgInfo.name, scope);
+        this.variableManager.markPackageLoaded(packageName);
+        return result;
+      } catch (e) {
+        return `Error loading package '${pkgInfo.name}': ${e.message}`;
+      }
+    } else {
+      return `Package '${pkgInfo.name}' is not yet implemented.`;
+    }
+  }
+  
+  async loadFileModule(inputUrl) {
     try {
       let url = inputUrl;
       let moduleName = "";
 
       if (inputUrl.startsWith("@@")) {
-        // Defined convention: @@Module -> /modules/Module.rat (or similar)
-        // For now, let's assume relative path check
         const name = inputUrl.substring(2).replace(/@$/, "");
         moduleName = name;
-        url = `${name}.rat`; // Default assumption for web: try fetching .rat file relative
+        url = `${name}.rat`;
       } else {
         const basename = url.split(/[/\\]/).pop().split(/[?#]/)[0].split('.')[0];
         moduleName = basename.charAt(0).toUpperCase() + basename.slice(1);
@@ -829,15 +897,7 @@ class WebCalculator {
 
       const content = await response.text();
 
-      // We can reuse manual parsing logic, logic similar to CLI
-      // But here we might want to be safer or strictly assume .rat script format
-      // If .js, we can't easily dynamic import(url) cross-origin or even same-origin easily without module setup.
-      // Restrict Web Load to .rat scripts for now unless it ends in .js and we try shim?
-      // Let's support .rat scripts primarily.
-
       if (url.endsWith(".js")) {
-        // Dynamic import for web? 
-        // import(url) works in modern browsers for modules.
         try {
           const mod = await import(url);
           const scope = mod.default || mod;
@@ -868,9 +928,8 @@ class WebCalculator {
         };
         return this.variableManager.loadModule(moduleName, modScope);
       }
-
     } catch (error) {
-      throw error; // Propagate to caller
+      throw error;
     }
   }
 
