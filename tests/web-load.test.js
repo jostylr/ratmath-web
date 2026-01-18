@@ -59,7 +59,8 @@ describe("WebCalculator Advanced Features", () => {
         calc.inputElement.value = "HELP TestFunc";
         calc.processInput();
 
-        expect(calc.lastOutput).toContain("TestFunc(x)");
+        // Function names are normalized to uppercase (TestFunc -> TESTFUNC)
+        expect(calc.lastOutput).toContain("TESTFUNC(x)");
         expect(calc.lastOutput).toContain("Adds one to x");
     });
 
