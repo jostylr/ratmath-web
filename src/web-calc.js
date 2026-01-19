@@ -539,7 +539,10 @@ class WebCalculator {
   }
 
   formatResult(result) {
-    if (result && result.type === "sequence") {
+    if (result && result.type === "string") {
+      // Return string value directly - newlines will be preserved in display
+      return result.value;
+    } else if (result && result.type === "sequence") {
       return this.variableManager.formatValue(result);
     } else if (result instanceof RationalInterval) {
       return this.formatInterval(result);
