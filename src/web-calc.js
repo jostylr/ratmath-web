@@ -14,6 +14,7 @@ import { IntervalVisualization, OperationVisualization, MultiStepVisualization }
 // Package module loaders for web - dynamically import bundled packages
 const PackageLoaders = {
     reals: () => import("@ratmath/reals/src/ratmath-module.js"),
+    "arith-funs": () => import("@ratmath/arith-funs/src/ratmath-module.js"),
 };
 
 class WebCalculator {
