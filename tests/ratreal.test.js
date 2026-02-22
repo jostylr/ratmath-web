@@ -207,7 +207,7 @@ test("VariableManager integration - constants", () => {
   vm.loadModule("Reals", RealsModule);
   
   const piResult = vm.processInput("PI()");
-  expect(piResult.type).toBe("expression");
+  console.log("PI RESULT:", JSON.stringify(piResult, null, 2)); expect(piResult.type).toBe("expression");
   expect(piResult.result).toBeInstanceOf(RationalInterval);
   expect(piResult.result.low.toNumber()).toBeCloseTo(3.14159, 4);
 

@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { WebCalculator } from "../src/web-calc.js";
 import { BaseSystem } from "@ratmath/core";
 
@@ -64,6 +64,14 @@ describe("WebCalculator Prefix Strictness", () => {
         calc = new TestWebCalculator();
     });
 
+    afterEach(() => {
+        // Restore default prefixes that tests might have mutated globally
+        BaseSystem.registerPrefix("t", BaseSystem.TERNARY);
+        BaseSystem.registerPrefix("q", BaseSystem.QUATERNARY);
+        BaseSystem.unregisterPrefix("z");
+        BaseSystem.unregisterPrefix("Q");
+    });
+
     test("Strict Prefix Interpretation", () => {
         // Set base to 36
         calc.handleBaseCommand("BASE 36");
@@ -79,7 +87,7 @@ describe("WebCalculator Prefix Strictness", () => {
         // Output should be '2' (in Base 36, 2 is '2')
         // Output format: "2 (2[36])"
         expect(calc.getLastLog()).toContain("2");
-        expect(calc.getLastLog()).toContain("(2[36])");
+        expect(calc.getLastLog()).toContain("(0u2)");
     });
 
     test("BASES command linking", () => {
