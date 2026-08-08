@@ -1,15 +1,29 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeAll, beforeEach, afterEach, afterAll } from "bun:test";
 import { WebCalculator } from "../src/web-calc.js";
 import { BaseSystem } from "@ratmath/core";
 
+let originalDocument;
+let originalWindow;
+
 // Mock global document if it doesn't exist (Bun environment might not have it)
-if (typeof document === "undefined") {
-    global.document = {
+beforeAll(() => {
+    originalDocument = globalThis.document;
+    originalWindow = globalThis.window;
+    if (typeof document === "undefined") {
+        global.document = {
         addEventListener: () => { },
         getElementById: () => ({ value: "", focus: () => { }, addEventListener: () => { } }),
-    };
-    global.window = { innerWidth: 1024 };
-}
+        };
+        global.window = { innerWidth: 1024 };
+    }
+});
+
+afterAll(() => {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+    if (originalWindow === undefined) delete globalThis.window;
+    else globalThis.window = originalWindow;
+});
 
 class TestWebCalculator extends WebCalculator {
     constructor() {

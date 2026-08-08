@@ -3,12 +3,14 @@
  * Tests SVG generation, interaction, and mathematical accuracy
  */
 
-import { test, expect } from "bun:test";
+import { test, expect, beforeAll, afterAll } from "bun:test";
 import { IntervalVisualization, OperationVisualization, MultiStepVisualization } from "../src/IntervalVisualization.js";
 import { Parser, Rational, RationalInterval } from "../index.js";
 
+let originalDocument;
+
 // Mock DOM environment for testing
-global.document = {
+const mockDocument = {
   createElementNS: (namespace, tagName) => {
     const element = {
       tagName: tagName.toUpperCase(),
@@ -79,6 +81,16 @@ global.document = {
     appendChild: function() {}
   }
 };
+
+beforeAll(() => {
+  originalDocument = globalThis.document;
+  globalThis.document = mockDocument;
+});
+
+afterAll(() => {
+  if (originalDocument === undefined) delete globalThis.document;
+  else globalThis.document = originalDocument;
+});
 
 // Mock container element
 function createMockContainer() {
@@ -243,7 +255,7 @@ test("OperationVisualization - Two Operand Operation", () => {
   expect(viz.intervals.some(iv => iv.label === "Result (intersection)")).toBe(true);
 });
 
-test("MultiStepVisualization - Expression Tree", () => {
+test("MultiStepVisualization - Expression Tree", async () => {
   const container = createMockContainer();
   const viz = new MultiStepVisualization(container);
   
@@ -258,9 +270,11 @@ test("MultiStepVisualization - Expression Tree", () => {
   const result = Parser.parse("1.5:3.5");
   
   viz.visualizeExpressionTree(operationTree, result);
+  await new Promise((resolve) => setTimeout(resolve, 0));
   
   expect(viz.stages.length).toBeGreaterThan(0);
   expect(viz.stages[0].type).toBe('operation');
+  viz.destroy();
 });
 
 test("IntervalVisualization - Mixed Number Intervals", () => {

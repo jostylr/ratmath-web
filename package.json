@@ -14,7 +14,7 @@
         "serve": "python3 -m http.server 3000 --directory docs"
     },
     "dependencies": {
-        "@ratmath/core": "^0.2.0",
+        "@ratmath/core": "^0.3.0",
         "@ratmath/parser": "^0.2.0",
         "@ratmath/algebra": "^0.2.0",
         "@ratmath/reals": "^0.1.0",

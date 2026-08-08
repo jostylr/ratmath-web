@@ -1,14 +1,18 @@
 
-import { describe, test, expect, spyOn, beforeEach, afterEach, mock } from "bun:test";
+import { describe, test, expect, spyOn, beforeAll, beforeEach, afterEach, afterAll, mock } from "bun:test";
 import { WebCalculator } from "../src/web-calc.js";
 import { VariableManager } from "@ratmath/algebra";
+
+let originalDocument;
+let originalWindow;
+let originalFetch;
 
 // Mock DOM environment
 const mockInput = { value: "", focus: () => { }, setSelectionRange: () => { }, addEventListener: () => { }, setAttribute: () => { } };
 const mockOutput = { appendChild: () => { }, innerHTML: "" };
 const mockElement = { addEventListener: () => { }, style: {}, click: () => { } };
 
-global.document = {
+const mockDocument = {
     getElementById: (id) => {
         if (id === "calculatorInput") return mockInput;
         if (id === "outputHistory") return mockOutput;
@@ -25,11 +29,28 @@ global.document = {
     },
     addEventListener: () => { }
 };
-global.window = {
+const mockWindow = {
     innerWidth: 1024,
     location: { search: "" },
     URLSearchParams: class { get() { return null; } }
 };
+
+beforeAll(() => {
+    originalDocument = globalThis.document;
+    originalWindow = globalThis.window;
+    originalFetch = globalThis.fetch;
+    globalThis.document = mockDocument;
+    globalThis.window = mockWindow;
+});
+
+afterAll(() => {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+    if (originalWindow === undefined) delete globalThis.window;
+    else globalThis.window = originalWindow;
+    if (originalFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = originalFetch;
+});
 
 describe("WebCalculator Advanced Features", () => {
     let calc;

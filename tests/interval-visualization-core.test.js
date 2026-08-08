@@ -3,11 +3,13 @@
  * These tests avoid complex DOM interaction mocking
  */
 
-import { test, expect } from "bun:test";
+import { test, expect, beforeAll, afterAll } from "bun:test";
 import { Parser, Rational, RationalInterval } from "../index.js";
 
+let originalDocument;
+
 // Comprehensive DOM mock for testing
-global.document = {
+const mockDocument = {
   createElementNS: () => ({
     setAttribute: () => {},
     appendChild: () => {},
@@ -34,6 +36,16 @@ global.document = {
   addEventListener: () => {},
   body: { appendChild: () => {} }
 };
+
+beforeAll(() => {
+  originalDocument = globalThis.document;
+  globalThis.document = mockDocument;
+});
+
+afterAll(() => {
+  if (originalDocument === undefined) delete globalThis.document;
+  else globalThis.document = originalDocument;
+});
 
 // Import after setting up mocks
 import { IntervalVisualization } from "../src/IntervalVisualization.js";
